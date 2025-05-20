@@ -24,42 +24,46 @@ echo " "
 date
 echo " "
 while IFS= read -r linha || [[ -n "$linha" ]]; do
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA assetfinder..."
-    echo " "
-    sh tool-assetfinder.sh $linha 
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA sublist3r..."
-    echo " "
-    sh tool-sublist3r.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA subfinder..."
-    echo " "
-    sh tool-subfinder.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA dnsenum..."
-    echo " "
-    sh tool-dnsenum.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA amass..."
-    echo " "
-    sh tool-amass.sh $linha 2>/dev/null
-    echo "CAPTURANDO SUBDOMINIIOS ENCONTRADOS..."
-    echo " "
-    sh parsing-domains.sh $linha
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA dnsrecon..."
-    echo " "
-    sh tool-dnsrecon.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA fierce..."
-    echo " "
-    sh tool-fierce.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA nikto..."
-    echo " "
-    sh tool-nikto.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA wapiti..."
-    echo " "
-    sh tool-wapiti.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA nuclei..."
-    echo " "
-    sh tool-nuclei.sh $linha 2>/dev/null
-    echo "ANALISANDO O DOMINIO $linha COM A FERRAMENTA hakrawler..."
-    echo " "
-    sh tool-hakrawler.sh $linha 2>/dev/null
+    echo "======================================="
+    echo "[+] Iniciando análise para: $linha"
+    echo "======================================="
+
+    for tool in \
+        tool-assetfinder.sh \
+        tool-sublist3r.sh \
+        tool-subfinder.sh \
+        tool-dnsenum.sh \
+        tool-amass.sh
+    do
+        echo "[+] Executando ${tool} para: $linha"
+        sh "$tool" "$linha" 2>/dev/null
+        echo "[✓] Finalizado ${tool} para: $linha"
+        echo ""
+    done
+
+    echo "[+] Executando parsing-domains.sh para: $linha"
+    sh parsing-domains.sh "$linha" 2>/dev/null
+    echo "[✓] Finalizado parsing-domains.sh para: $linha"
+    echo ""
+
+    for tool in \
+        tool-dnsrecon.sh \
+        tool-fierce.sh \
+        tool-nikto.sh \
+        tool-wapiti.sh \
+        tool-nuclei.sh \
+        tool-hakrawler.sh
+    do
+        echo "[+] Executando ${tool} para: $linha"
+        sh "$tool" "$linha" 2>/dev/null
+        echo "[✓] Finalizado ${tool} para: $linha"
+        echo ""
+    done
+
+    echo "======================================="
+    echo "[✓] Análise completa para: $linha"
+    echo "======================================="
+    echo ""
 done < "$DOMINIO"
 date
 #FAZ A VALIDAÇÃO DE CADA SUBDOMINIO ENCONTRADO
