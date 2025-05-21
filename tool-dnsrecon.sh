@@ -1,2 +1,1 @@
-mkdir -p OUT-WEB-BIRD/$1
-dnsrecon -d $1 >> OUT-WEB-BIRD/$1/$1-dnsrecon
+for target in $(cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && dnsrecon -d $target >> OUT-WEB-BIRD/$target/$target-dnsrecon && ./tool-fierce.sh ;done
