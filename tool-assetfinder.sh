@@ -1,2 +1,2 @@
-mkdir -p OUT-WEB-BIRD/$1
-assetfinder -subs-only $1 >> OUT-WEB-BIRD/$1/$1-assetfinder
+
+for target in (cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && assetfinder -subs-only $target >> OUT-WEB-BIRD/$target/$target-assetfinder && ./tool-sublist3r.sh ;done
