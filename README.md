@@ -60,5 +60,5 @@ go install github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
 ```bash
 git clone https://github.com/YgorAlberto/bird-tool-web.git
 chmod +x *.sh
-echo "seu.alvo.com.br" > domain
-./BIRD-MAIN-TOOL.sh domain
+echo "seu.alvo.com.br" > target.txt
+./BIRD-MAIN-TOOL.sh
