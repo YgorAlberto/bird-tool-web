@@ -10,25 +10,26 @@ echo " "
 echo "ATENÇÃO VERIFIQUE SE TODAS AS FERRAMENTAS ESTÃO INSTALADAS E CONTINUE"
 echo " "
 
-if [ -z "$1" ]; then
-    echo "Erro: DOMINIO não informado."
-    echo "Uso: BIRD-MAIN-TOOL.sh domain"
-    exit 1
-fi
+#if [ -z "$1" ]; then
+#    echo "Erro: DOMINIO não informado."
+#    echo "Uso: BIRD-MAIN-TOOL.sh domain"
+#    exit 1
+#fi
 
 # FERRAMENTA PRINCIPAL QUE FAZ A ANÁLISE DOS DOMINIOS NA LISTA
-DOMINIO=$1
+#DOMINIO=$1
 
 echo "TAKING A LOOK ON DOMAINS"
 echo " "
 date
 echo " "
 
-# essa ferramenta executa o ASSETFINDER -> ...
+echo "essa ferramenta executa em linha: ASSETFINDER -> SUBLIST3R -> SUBFINDER -> DNENUM -> AMASS -> DNSRECON -> FIERCE -> NIKTO -> WAPITI -> NUCLEI -> HAKRAWLER"
 ./tool-assetfinder.sh
-echo " "
+echo " DONE "
 date
 echo " "
+echo "SAVING SUBDOMAINS FOUND"
 ./parsing-domains.sh
 #for domain in $(cat domain);do ./tool-assetfinder.sh $domain && ./tool-sublist3r.sh $domain && ./tool-subfinder.sh $domain && ./tool-dnsenum.sh $domain && ./tool-dnsrecon.sh $domain && ./tool-fierce.sh $domain && ./tool-amass.sh $domain && ./tool-nikto.sh $domain && ./tool-wapiti.sh $domain && ./tool-nuclei.sh $domain && ./tool-hakrawler.sh $domain && ./parsing-domains.sh ;done
 
@@ -80,11 +81,12 @@ date
 echo "VALIDATING SUBDOMAINS FOUND"
 echo " "
 sh domain-validator.sh
-echo " "
+echo " DONE "
 date
 echo " "
+echo " VARRENDO OS SUBDOMAINS ENCONTRADOS "
 #RODA AS FERRAMENTAS NOVAMENTE NOS SUBDOMINIOS ENCONTRADO
-./BIRD-SUB-TOOL.sh
+./tool-assetfinder.sh
 echo " "
 date
 echo " "
