@@ -1,3 +1,1 @@
-mkdir -p OUT-WEB-BIRD/$1
-echo 'http://'$1 | hakrawler | sort -u >> OUT-WEB-BIRD/$1/$1-hakrawler
-echo 'https://'$1 | hakrawler | sort -u >> OUT-WEB-BIRD/$1/$1-s-hakrawler
+for target in $(cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && echo 'http://'$target | hakrawler | sort -u >> OUT-WEB-BIRD/$target/$target-hakrawler && echo 'https://'$target | hakrawler | sort -u >> OUT-WEB-BIRD/$target/$target-s-hakrawler ;done
