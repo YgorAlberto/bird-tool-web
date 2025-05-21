@@ -1,2 +1,1 @@
-mkdir -p OUT-WEB-BIRD/$1
-subfinder --all -d $1 >> OUT-WEB-BIRD/$1/$1-subfinder
+for target in (cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && subfinder --all -d $target >> OUT-WEB-BIRD/$target/$target-subfinder && ./tool-dnsenum.sh ;done
