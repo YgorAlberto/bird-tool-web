@@ -1,2 +1,1 @@
-mkdir -p OUT-WEB-BIRD/$1
-sublist3r -n -d $1 | grep "$1" | grep -v "Enumerating" >> OUT-WEB-BIRD/$1/$1-sublist3r
+for target in (cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && sublist3r -n -d $target | grep "$target" | grep -v "Enumerating" >> OUT-WEB-BIRD/$target/$target-sublist3r && ./tool-subfinder.sh ;done
