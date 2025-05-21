@@ -24,7 +24,13 @@ echo " "
 date
 echo " "
 
-for domain in $(cat domain);do ./tool-assetfinder.sh $domain && ./tool-sublist3r.sh $domain && ./tool-subfinder.sh $domain && ./tool-dnsenum.sh $domain && ./tool-dnsrecon.sh $domain && ./tool-fierce.sh $domain && ./tool-amass.sh $domain && ./tool-nikto.sh $domain && ./tool-wapiti.sh $domain && ./tool-nuclei.sh $domain && ./tool-hakrawler.sh $domain && ./parsing-domains.sh ;done
+# essa ferramenta executa o ASSETFINDER -> ...
+./tool-assetfinder.sh
+echo " "
+date
+echo " "
+./parsing-domains.sh
+#for domain in $(cat domain);do ./tool-assetfinder.sh $domain && ./tool-sublist3r.sh $domain && ./tool-subfinder.sh $domain && ./tool-dnsenum.sh $domain && ./tool-dnsrecon.sh $domain && ./tool-fierce.sh $domain && ./tool-amass.sh $domain && ./tool-nikto.sh $domain && ./tool-wapiti.sh $domain && ./tool-nuclei.sh $domain && ./tool-hakrawler.sh $domain && ./parsing-domains.sh ;done
 
 #while IFS= read -r linha || [[ -n "$linha" ]]; do
 #    echo "======================================="
