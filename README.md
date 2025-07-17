@@ -50,6 +50,7 @@ O script executa automaticamente as seguintes ferramentas durante a análise:
 
 ```bash
 sudo apt install amass dnsenum dnsrecon fierce nikto wapiti
+sudo apt install golang-go
 go install github.com/tomnomnom/assetfinder@latest
 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
