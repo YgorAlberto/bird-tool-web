@@ -1,1 +1,0 @@
-for target in $(cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && nuclei -H "Mozilla/5.0" -u "http://"$target >> OUT-WEB-BIRD/$target/$target-nuclei && nuclei -H "Mozilla/5.0" -u "https://"$target >> OUT-WEB-BIRD/$target/$target-s-nuclei && ./tool-hakrawler.sh ;done
