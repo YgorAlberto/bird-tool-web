@@ -1,0 +1,1 @@
+for target in $(cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && nikto -useragent Mozilla/5.0 -host "https://$target" >> OUT-WEB-BIRD/$target/$target-nikto && nikto -useragent Mozilla/5.0 -host "http://$target" >> OUT-WEB-BIRD/$target/$target-s-nikto;done
