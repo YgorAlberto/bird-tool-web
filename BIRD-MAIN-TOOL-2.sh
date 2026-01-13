@@ -14,7 +14,7 @@ echo "TAKING A LOOK ON DOMAINS"
 echo " "
 date
 echo " "
-echo "essa ferramenta executa em linha: ASSETFINDER -> SUBLIST3R -> SUBFINDER -> DNENUM -> AMASS -> DNSRECON -> FIERCE -> NIKTO -> WAPITI -> NUCLEI -> HAKRAWLER"
+echo "essa ferramenta executa em linha: ASSETFINDER -> SUBLIST3R -> SUBFINDER -> DNENUM -> AMASS -> DNSRECON -> FIERCE -> NIKTO -> WAPITI -> NUCLEI -> HAKRAWLER -> URLFINDER -> WAYBACKURLS -> BIRD-CRAFTJS"
 
 # Lista de scripts para a primeira execução
 scripts=(
@@ -29,6 +29,9 @@ scripts=(
     "./tool-wapiti.sh"
     "./tool-nuclei.sh"
     "./tool-hakrawler.sh"
+    "./tool-urlfinder.sh"
+    "./tool-waybackurl.sh"
+    "./tool-bird-craftjs.sh"
 )
 
 # Função para executar uma lista de scripts em paralelo
