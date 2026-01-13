@@ -28,7 +28,9 @@ O script executa automaticamente as seguintes ferramentas durante a análise:
 - [`subfinder`](https://github.com/projectdiscovery/subfinder) — Enumeração rápida de subdomínios.
 - [`sublist3r`](https://github.com/aboul3la/Sublist3r) — Ferramenta para descoberta de subdomínios.
 - [`wapiti`](https://github.com/wapiti-scanner/wapiti) — Scanner de vulnerabilidades em aplicações web.
-
+- [`URLFINDER`](GO INSTALL) — Buscador de URLS expostas.
+- [`WAYBACKURL`](GO INSTALL) — Buscador de URLS expostas.
+- [`BRID-CRAFTJS`](ALREADY INCLUDED) — Scanner de Codigos JS
 ---
 
 ## 🚀 Como Funciona
