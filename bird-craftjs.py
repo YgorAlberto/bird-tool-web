@@ -91,14 +91,11 @@ PATTERNS = {
 
     # RECONHECIMENTO GERAL
     "Full Path Disclosure": {
-        "regex": r"(?:\/[a-zA-Z0-9_\-\/]+(?:\/var\/www|\/home\/|\/usr\/local)|[C-Z]:\\[a-zA-Z0-9_\\\-]+)",
-        "desc": "Caminho completo de diretório do sistema operacional.",
-        "exploit": "Ajuda em ataques de LFI/Path Traversal ao saber a estrutura exata de arquivos."
-    },
-    "Internal Email": {
-        "regex": r"[a-zA-Z0-9\.\-_]+@[a-zA-Z0-9\.\-]+\.(?:com|net|org|br)",
-        "desc": "Endereço de e-mail encontrado no código.",
-        "exploit": "Útil para montar lista de alvos para Phishing ou Username Enumeration/Brute-force."
+        # MELHORIA IMPLEMENTADA: Regex híbrida (Win/Linux) mais gulosa para capturar o path inteiro até a extensão.
+        # Suporta espaços em paths Windows (ex: Program Files) e profundidade em Linux.
+        "regex": r"(?:[a-zA-Z]:\\[a-zA-Z0-9_\-\.\\ ]+(?:\\[a-zA-Z0-9_\-\.\\ ]+)*|(?:\/(?:var|home|etc|opt|usr|root|tmp|Volumes|proc)(?:\/[a-zA-Z0-9_\-\.]+)+))",
+        "desc": "Caminho completo de diretório do sistema operacional (Windows/Linux/Mac).",
+        "exploit": "Ajuda em ataques de LFI/Path Traversal ao revelar a estrutura exata de arquivos."
     }
 }
 
