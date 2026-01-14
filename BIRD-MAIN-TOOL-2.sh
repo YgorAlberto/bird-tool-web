@@ -52,6 +52,20 @@ run_parallel() {
 # Primeira execução em paralelo
 run_parallel
 
+echo " "
+echo " "
+echo "LOOKING AROUND FOR URLS"
+echo " "
+echo " "
+./tool-urlfinder.sh
+./tool-waybackurl.sh
+echo " "
+echo " "
+echo "LOOKING FOR INTERESTING TERMS"
+echo " "
+echo " "
+./tool-bird-craftjs.sh
+
 echo " DONE "
 date
 echo " "
