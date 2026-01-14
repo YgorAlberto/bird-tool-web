@@ -29,9 +29,6 @@ scripts=(
     "./tool-wapiti.sh"
     "./tool-nuclei.sh"
     "./tool-hakrawler.sh"
-    "./tool-urlfinder.sh"
-    "./tool-waybackurl.sh"
-    "./tool-bird-craftjs.sh"
 )
 
 # Função para executar uma lista de scripts em paralelo
