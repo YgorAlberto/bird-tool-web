@@ -85,6 +85,9 @@ echo " VARRENDO OS SUBDOMAINS ENCONTRADOS "
 # Segunda execução em paralelo
 run_parallel
 
+#Roda o final para fazer o dashboard com as informações organizadas
+./bird-analyzer.sh
+
 echo " "
 date
 echo " "
