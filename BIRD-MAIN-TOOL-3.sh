@@ -60,6 +60,8 @@ scripts=(
     "./tool-wapiti.sh"
     "./tool-nuclei.sh"
     "./tool-hakrawler.sh"
+    "./tool-urlfinder.sh"
+    "./tool-waybackurl.sh"
 )
 
 # Função para executar uma lista de scripts em paralelo
@@ -77,48 +79,60 @@ run_parallel() {
     done
 }
 
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🚀 INICIANDO BUSCAS COM AS FERRAMENTAS"
+echo "📅 $(date '+%d/%m/%Y %H:%M:%S')"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 # Primeira execução em paralelo
 run_parallel
 
 echo " "
-echo " "
-echo "LOOKING AROUND FOR URLS"
-echo " "
-echo " "
-./tool-urlfinder.sh
-./tool-waybackurl.sh
-echo " "
-echo " "
-echo "LOOKING FOR INTERESTING TERMS"
-echo " "
-echo " "
-./tool-bird-craftjs.sh
-echo "CRAFT JS TERMINADO"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔍 ANALISANDO ARQUIVOS EM BUSCA DE TERMOS INTERESSANTES"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
+./tool-bird-craftjs.sh
 
-echo " DONE "
-date
-echo " "
-echo "SAVING SUBDOMAINS FOUND"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "💾 SALVANDO SUBDOMÍNIOS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 ./parsing-domains.sh
-echo " "
-date
-echo "VALIDATING SUBDOMAINS FOUND"
-echo " "
-#FAZ A VALIDAÇÃO DE CADA SUBDOMINIO ENCONTRADO
-./domain-validator.sh
-echo " DONE "
-date
-echo " "
-echo " VARRENDO OS SUBDOMAINS ENCONTRADOS "
-#RODA AS FERRAMENTAS NOVAMENTE NOS SUBDOMINIOS ENCONTRADO
 
-# Segunda execução em paralelo
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✅ VALIDANDO SUBDOMÍNIOS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+./domain-validator.sh
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔍 ESCANEANDO SUBDOMÍNIOS ENCONTRADOS"
+echo "📅 $(date '+%d/%m/%Y %H:%M:%S')"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 run_parallel
 
-#Roda o final para fazer o dashboard com as informações organizadas
+#Roda o script final para fazer o dashboard com as informações organizadas
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✅ FERRAMENTAS FINALIZADAS"
+echo "📊 GERANDO DASHBOARD HTML"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 ./bird-analyzer.sh
 
-echo " "
-date
-echo " "
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "                    BIRD TOOL WEB - FINALIZADO"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "📅 Data/Hora: $(date '+%d/%m/%Y %H:%M:%S')"
+echo "📁 Resultados salvos em: OUT-WEB-BIRD/"
+echo "📁 Dashboard salvo em: dashboard/"
+open dashboard/index.html
