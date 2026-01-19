@@ -1,3 +1,4 @@
+sudo apt update
 sudo apt install amass assetfinder dnsenum dnsrecon fierce hakrawler nikto nuclei subfinder sublist3r 
 sudo apt install golang-go
 go install github.com/tomnomnom/waybackurls@latest
