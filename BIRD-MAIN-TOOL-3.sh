@@ -61,7 +61,7 @@ echo " "
 echo "LOOKING FOR INTERESTING TERMS"
 echo " "
 echo " "
-./bird-craftjs-v2.py
+./tool-bird-craftjs.sh
 echo "CRAFT JS TERMINADO"
 echo ""
 
