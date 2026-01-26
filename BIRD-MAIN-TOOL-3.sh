@@ -115,9 +115,15 @@ echo "🔍 ESCANEANDO SUBDOMÍNIOS ENCONTRADOS"
 echo "📅 $(date '+%d/%m/%Y %H:%M:%S')"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
+# Segunda execução em paralelo
 run_parallel
 
-#Roda o script final para fazer o dashboard com as informações organizadas
+echo " "
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔍 ANALISANDO ARQUIVOS EM BUSCA DE TERMOS INTERESSANTES NOS SUBDOMINIOS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+./tool-bird-craftjs.sh
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
