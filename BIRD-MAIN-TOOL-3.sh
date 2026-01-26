@@ -123,7 +123,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🔍 ANALISANDO ARQUIVOS EM BUSCA DE TERMOS INTERESSANTES NOS SUBDOMINIOS"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-./tool-bird-craftjs.sh
+./tool-web-dashboard.sh
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
