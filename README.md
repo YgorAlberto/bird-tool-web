@@ -47,17 +47,7 @@ O script executa automaticamente as seguintes ferramentas durante a análise:
 
 - Linux (recomendado: Kali Linux)
 - Ferramentas listadas instaladas no sistema e disponíveis no PATH
-
-### Instalação das ferramentas (exemplo com `apt` e `go install`):
-
-```bash
-sudo apt install amass dnsenum dnsrecon fierce nikto wapiti
-sudo apt install golang-go
-sudo apt install assetfinder
-go install github.com/tomnomnom/assetfinder@latest
-go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
-```
+- executar `./dependencias.sh`
 
 ### COMO UTILIZAR
 
@@ -65,4 +55,4 @@ go install github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
 git clone https://github.com/YgorAlberto/bird-tool-web.git
 chmod +x *.sh
 echo "seu.alvo.com.br" > target.txt
-./BIRD-MAIN-TOOL.sh
+./BIRD-TOOL-WEB.sh
