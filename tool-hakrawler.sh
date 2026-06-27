@@ -1,1 +1,1 @@
-for target in $(cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && echo 'http://'$target | hakrawler | sort -u >> OUT-WEB-BIRD/$target/$target-hakrawler && echo 'https://'$target | hakrawler | sort -u >> OUT-WEB-BIRD/$target/$target-s-hakrawler ;done
+for target in $(cat target.txt);do mkdir -p OUT-WEB-BIRD/$target && echo 'http://'$target | hakrawler | sort -u >> OUT-WEB-BIRD/$target/$target-URL-hakrawler && echo 'https://'$target | hakrawler | sort -u >> OUT-WEB-BIRD/$target/$target-URL-s-hakrawler ;done
