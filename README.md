@@ -1,217 +1,327 @@
-# 🐦 BIRD TOOL WEB v4
+# W-BRID — Bird Tool Web
 
-<p align="center">
-  <b>Automated Web Reconnaissance & Security Analysis Suite</b><br>
-  <i>Subdomain discovery → Validation → Deep crawling → Dashboard generation</i>
-</p>
+Suíte de reconhecimento e análise de segurança web para escopos autorizados. O W-BRID executa descoberta de subdomínios, coleta de URLs, crawling, validação, análise de JavaScript, checagens HTTP/TLS/headers/métodos e consolida tudo em um relatório HTML único.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnu-bash&logoColor=white" />
-  <img src="https://img.shields.io/badge/Python-3.x-3776AB?logo=python&logoColor=white" />
-  <img src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black" />
-  <img src="https://img.shields.io/badge/License-MIT-blue" />
-</p>
+O relatório normal é gerado primeiro. A análise IA é opcional, roda em segundo plano e atualiza o menu `IA Findings` quando termina.
 
----
+## Modelo de escopo
 
-## 📌 O que é
-
-**Bird Tool Web** é uma suíte de automação para reconhecimento web e análise de segurança. Executa mais de 12 ferramentas em paralelo, valida subdomínios, consulta o Shodan, e gera **dashboards HTML interativos** com análise de risco, exploração de portas, fuzzing e visualização em árvore de URLs.
-
-### Dois modos de dashboard:
-| Dashboard | Descrição |
-|-----------|-----------|
-| 📊 **Dashboard Auto** | Análise baseada em regras (sem dependência externa) |
-| 🤖 **Dashboard LLM** | Análise com IA via Ollama (deepseek-r1:14b) |
-
----
-
-## 🚀 Como Funciona
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. DESCOBERTA          Busca subdomínios com 6 ferramentas     │
-│     assetfinder, sublist3r, subfinder, dnsenum, dnsrecon        │
-├─────────────────────────────────────────────────────────────────┤
-│  2. VALIDAÇÃO           Filtra apenas subdomínios ativos (DNS)  │
-│     domain-validator.sh, parsing-domains.sh                     │
-├─────────────────────────────────────────────────────────────────┤
-│  3. ESCANEAMENTO        Executa exploração nos subs encontrados │
-│     fierce, hakrawler, waybackurls, gau, urlfinder, katana      │
-├─────────────────────────────────────────────────────────────────┤
-│  4. ANÁLISE             Busca dados sensíveis em JS             │
-│     bird-craftjs (API keys, tokens, senhas, rotas)              │
-├─────────────────────────────────────────────────────────────────┤
-│  5. DASHBOARD           Gera relatório HTML interativo          │
-│     Shodan API + análise de risco + exploração de portas        │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## ⚙️ Instalação
+O domínio analisado é sempre lido de `target.txt` no início da execução.
 
 ```bash
-git clone https://github.com/YgorAlberto/bird-tool-web.git
-cd bird-tool-web
+echo "dominio-autorizado.example" > target.txt
+./BIRD-TOOL-WEB-v4.sh
+```
+
+O script normaliza o domínio, grava o escopo atual em `OUT-WEB-BIRD/.current-scope` e usa esse valor para filtrar o relatório e a IA. Nada deve ficar fixo nos scripts: cada execução deve refletir somente o domínio corrente e seus subdomínios.
+
+## Instalação
+
+```bash
 chmod +x *.sh
-```
-
-### Instalar dependências
-```bash
 ./dependencias.sh
 ```
-> Instala: assetfinder, dnsenum, dnsrecon, fierce, hakrawler, subfinder, sublist3r, waybackurls, urlfinder, gau, katana, python3, jq, Ollama + deepseek-r1:14b
 
----
+O script principal também pergunta, de forma interativa, se você deseja instalar ou atualizar dependências antes da execução.
 
-## 📋 Uso
+## Fluxo de execução
 
-### 1. Defina o alvo
-```bash
-echo "seu.alvo.com.br" > target.txt
+```text
+Descoberta inicial
+  → Katana
+  → parsing dos domínios
+  → validação dos subdomínios
+  → segunda rodada das ferramentas principais
+  → Katana novamente
+  → Bird-CraftJS
+  → Bird Final Findings
+  → relatório W-BRID
+  → IA opcional em segundo plano
 ```
 
-### 2. Execute
+O Katana roda duas vezes: uma após a primeira fase de descoberta e outra depois da validação/segunda rodada das ferramentas.
+
+## Script principal
+
 ```bash
 ./BIRD-TOOL-WEB-v4.sh
 ```
 
-### 3. Menu interativo
-O script pergunta:
-```
-📦 Deseja instalar/atualizar dependências? [s/N]
+Durante a execução, o script pergunta:
 
-📊 Qual dashboard gerar?
-  1) 📊 Dashboard (sem LLM)
-  2) 🤖 Dashboard LLM (requer Ollama)
-  3) 📊 + 🤖 Ambos
-```
+- se deve instalar/atualizar dependências;
+- se deve ativar a análise IA em segundo plano após o relatório normal.
 
-### 4. Resultados
-```
-OUT-WEB-BIRD/           ← Dados brutos de todas as ferramentas
-dashboard/              ← Dashboard HTML (análise por regras)
-dashboard-llm/          ← Dashboard HTML (análise com IA)
-```
+Quando a IA é ativada, o relatório HTML já fica pronto antes dela terminar. Depois que a IA concluir, basta atualizar a página para liberar e preencher o menu `IA Findings`.
 
----
+## Saídas principais
 
-## 🔧 Ferramentas Integradas
+```text
+OUT-WEB-BIRD/<target>/
+  <target>-FULL-URLs
+  <target>-bird-craftjs
+  <target>-bird-craftjs.json
+  <target>-bird-final-findings.json
+  <target>-bird-ai-findings.json
+  <target>-bird-ai-manifest.json
+  <target>-bird-ai.log
+  demais outputs das ferramentas
 
-### Descoberta de Subdomínios
-| Ferramenta | Descrição |
-|------------|-----------|
-| [assetfinder](https://github.com/tomnomnom/assetfinder) | Descoberta rápida de subdomínios |
-| [subfinder](https://github.com/projectdiscovery/subfinder) | Enumeração passiva de subdomínios |
-| [sublist3r](https://github.com/aboul3la/Sublist3r) | Enumeração via múltiplas fontes |
-| [dnsenum](https://github.com/fwaeytens/dnsenum) | Enumeração DNS completa |
-| [dnsrecon](https://github.com/darkoperator/dnsrecon) | Reconhecimento de registros DNS |
-
-### Exploração & Crawling
-| Ferramenta | Descrição |
-|------------|-----------|
-| [fierce](https://github.com/mschwager/fierce) | Mapeamento DNS e brute-force |
-| [hakrawler](https://github.com/hakluke/hakrawler) | Rastreio de URLs em aplicações web |
-| [waybackurls](https://github.com/tomnomnom/waybackurls) | URLs históricas via Wayback Machine |
-| [gau](https://github.com/lc/gau) | URLs de múltiplas fontes públicas |
-| [urlfinder](https://github.com/projectdiscovery/urlfinder) | Busca de URLs expostas |
-| [katana](https://github.com/projectdiscovery/katana) | Crawler com JS rendering (Chromium) |
-
-### Análise
-| Ferramenta | Descrição |
-|------------|-----------|
-| **BRID-CRAFTJS** | Scanner de código JS (API keys, tokens, senhas, emails, rotas) |
-| [Shodan API](https://www.shodan.io/) | Portas abertas, CVEs, serviços expostos |
-| [Ollama](https://ollama.ai/) | Análise de risco com IA (opcional) |
-
----
-
-## 📊 Dashboard — Funcionalidades
-
-### Páginas Geradas
-| Página | Conteúdo |
-|--------|----------|
-| **index.html** | Resumo executivo, análise de risco, achados, vulnerabilidades, recomendações, comandos de exploração |
-| **subdomains.html** | Tabela com status, IPs, portas/serviços, botões de ação (IP, Dom, GIT, Fuzz, Explore) |
-| **brid-craftjs.html** | Dados sensíveis encontrados em JS (deduplicados e ordenados) |
-| **urls.html** | Todas as URLs descobertas (deduplicadas e ordenadas) |
-| **tree.html** | Visualização em árvore de diretórios/arquivos clicáveis |
-
-### Botões de Ação por Subdomínio
-| Botão | Funcionalidade |
-|-------|----------------|
-| ⚙️ **IP** | Shodan, Censys, FOFA + dorks de IP |
-| 🌐 **Dom** | Busca por domínio + Google dorks (docs, login, APIs, leaks) |
-| 💻 **GIT** | GitHub/GitLab code search + dorks de secrets |
-| 🔍 **Fuzz** | Comandos copy-paste: gobuster, feroxbuster, dirsearch, ffuf, dirb |
-| 🔓 **Explore** | Links e comandos por porta aberta (HTTP, FTP, SSH, SMB, RDP, DB...) |
-
-### 🔥 Fuzz Geral
-Card na página de subdomínios com comando `for` que executa fuzzing em **todos** os subdomínios ativos de uma vez, com saída salva em arquivo.
-
-### 🚀 Próximos Passos
-Seção no dashboard com comandos customizados baseados na superfície de ataque:
-- Nmap Deep Scan / Vuln Scripts
-- Nuclei Scan em todos os subs
-- SSL Check / HTTP Headers
-- FTP Anonymous Check
-- SSH Banner Grab
-- Database Service Scan
-
----
-
-## 📁 Estrutura de Arquivos
-
-```
-bird-tool-web/
-├── BIRD-TOOL-WEB-v4.sh          # Script principal (menu interativo)
-├── dependencias.sh               # Instalador de dependências + Ollama
-├── target.txt                    # Arquivo de alvos (um domínio por linha)
-├── parsing-domains.sh            # Consolida subdomínios encontrados
-├── domain-validator.sh           # Valida subdomínios via DNS
-├── tool-assetfinder.sh           # Wrapper assetfinder
-├── tool-subfinder.sh             # Wrapper subfinder
-├── tool-sublist3r.sh             # Wrapper sublist3r
-├── tool-dnsenum.sh               # Wrapper dnsenum
-├── tool-dnsrecon.sh              # Wrapper dnsrecon
-├── tool-fierce.sh                # Wrapper fierce
-├── tool-hakrawler.sh             # Wrapper hakrawler
-├── tool-waybackurl.sh            # Wrapper waybackurls
-├── tool-gau.sh                   # Wrapper gau
-├── tool-urlfinder.sh             # Wrapper urlfinder
-├── tool-katana.sh                # Wrapper katana (JS crawl)
-├── tool-bird-craftjs.sh          # Scanner JS (busca dados sensíveis)
-├── tool-bird-craftjs-v2.py       # Motor Python do BRID-CRAFTJS
-├── tool-web-dashboard.sh         # Gerador do dashboard (sem LLM)
-├── tool-web-dashboard-llm.sh     # Gerador do dashboard (com LLM)
-├── OUT-WEB-BIRD/                 # Saídas das ferramentas
-├── dashboard/                    # Dashboard HTML gerado (sem LLM)
-└── dashboard-llm/                # Dashboard HTML gerado (com LLM)
+dashboard/
+  index.html
+  relatorio.html
+  subdomains.html
+  brid-craftjs.html
+  ai-findings.html
+  final-findings.html
+  urls.html
+  tree.html
+  dns.html
+  assets/
 ```
 
----
+`dashboard/index.html` e `dashboard/relatorio.html` apontam para a visão principal do relatório.
 
-## 📦 Pré-requisitos
+## Relatório HTML
 
-- **OS:** Linux (recomendado: Kali Linux / Parrot OS)
-- **Runtime:** bash, python3, Go (para instalar ferramentas via `go install`)
-- **API Key (opcional):** `SHODAN_API_KEY` para consulta de portas/serviços via API paga
-- **LLM (opcional):** Ollama com modelo deepseek-r1:14b para Dashboard LLM
+O título da página e o cabeçalho exibem dinamicamente:
 
-### Variáveis de Ambiente
+```text
+W-BRID - DOMÍNIO
+```
+
+A ordem dos menus é:
+
+1. Dashboard
+2. Subdomínio
+3. Bird-Craft
+4. IA Findings
+5. Final Findings
+6. Urls
+7. Tree
+8. DNS
+
+### Dashboard
+
+A página inicial fica limpa e focada em visão executiva do escopo:
+
+- subdomínios ativos;
+- subdomínios inativos;
+- IPs únicos;
+- URLs coletadas;
+- gráfico com as portas mais recorrentes, quando houver dados.
+
+### Subdomínio
+
+Lista subdomínios, status, IPs, portas, serviços e ações úteis. Quando a IA termina, a coluna `Infraestrutura IA` passa a mostrar informações como CDN, WAF, cloud, provider e ASN/IP quando detectados.
+
+### Bird-Craft
+
+Mostra endpoints e achados extraídos de HTML/JavaScript. Campos muito longos quebram linha no próprio card/tabela para evitar rolagem horizontal e facilitar acesso aos links de referência.
+
+### IA Findings
+
+Menu complementar. Enquanto a IA está rodando, o menu fica em estado de espera. Ao concluir, a página exibe:
+
+- infraestrutura detectada;
+- tecnologias e versões;
+- endpoints de API;
+- achados relevantes e confirmáveis;
+- fontes exatas onde cada evidência foi encontrada.
+
+Links longos e referências usam contraste alto e quebra de linha para leitura mais confortável.
+
+### Final Findings
+
+Integra no relatório principal os achados HTTP/TLS/headers/métodos gerados pelo `bird-final-findings.py`, agrupando comportamentos importantes sem repetir listas gigantes de URLs.
+
+## Bird-CraftJS
+
+O wrapper permanece simples e em linha única:
+
 ```bash
-export SHODAN_API_KEY="sua_chave_aqui"    # Opcional: habilita Shodan API paga
+./tool-bird-craftjs.sh
 ```
 
----
+Ele consolida as URLs em `OUT-WEB-BIRD/<target>/<target>-FULL-URLs` e grava:
 
-## 👨‍💻 Autor
+```text
+OUT-WEB-BIRD/<target>/<target>-bird-craftjs
+OUT-WEB-BIRD/<target>/<target>-bird-craftjs.json
+```
 
-**KidMan** — [@YgorAlberto](https://github.com/YgorAlberto)
+A ferramenta operacional é:
 
----
+```text
+tool-bird-craftjs-v2.py
+```
 
-## ⚠️ Aviso Legal
+A versão anterior permanece no diretório como:
 
-Esta ferramenta foi desenvolvida para fins educacionais e de segurança ofensiva autorizada. Use apenas em domínios e redes para os quais você possui autorização explícita. O autor não se responsabiliza pelo uso indevido.
+```text
+tool-bird-craftjs-legacy.py
+```
+
+Isso permite comparar outputs antigos e novos sem precisar alterar os demais scripts que já chamavam o nome antigo.
+
+O scanner:
+
+- respeita o domínio raiz autorizado e subdomínios;
+- bloqueia entradas externas e redirecionamentos fora de escopo;
+- ignora imagens, CSS, fontes, mídia e respostas sem valor técnico;
+- analisa HTML, JavaScript, chunks e source maps;
+- extrai endpoints, métodos, parâmetros, auth, chaves e padrões sensíveis;
+- reduz falsos positivos de segredo usando contexto, formato e entropia;
+- grava TXT e JSON para consumo do dashboard.
+
+## Bird Final Findings
+
+O wrapper padrão é:
+
+```bash
+./tool-bird-final-findings.sh
+```
+
+Uso direto:
+
+```bash
+python3 bird-final-findings.py -f urls.txt \
+  --scope-domain dominio-autorizado.example \
+  --json-output findings.json
+```
+
+Por padrão, ele gera JSON estruturado para o dashboard principal. O dashboard HTML autocontido antigo só é gerado quando solicitado:
+
+```bash
+python3 bird-final-findings.py -f urls.txt \
+  --scope-domain dominio-autorizado.example \
+  --json-output findings.json \
+  --dashboard-html
+```
+
+Principais verificações:
+
+- headers de segurança ausentes ou fracos;
+- CORS;
+- cookies;
+- TLS e redirecionamento;
+- arquivos sensíveis comuns;
+- diferenças entre métodos HTTP;
+- ASN/provider, quando disponível;
+- evidências agrupadas por causa raiz.
+
+Por padrão, são testados `GET`, `HEAD`, `OPTIONS`, `POST` com payload canário inválido e `TRACE`. Métodos mais sensíveis podem ser ativados somente com autorização explícita:
+
+```bash
+--full-http-methods
+```
+
+Essa flag inclui métodos como `PUT`, `PATCH`, `DELETE`, `CONNECT` e `PROPFIND` com payload canário.
+
+## Análise IA
+
+A IA usa Ollama local e é executada pelo wrapper:
+
+```bash
+./tool-web-ai-analysis.sh
+```
+
+No fluxo normal, ela só começa depois que o relatório principal já foi gerado.
+
+### Comportamento esperado
+
+A IA:
+
+- lê os arquivos textuais úteis dentro de `OUT-WEB-BIRD/<target>/`;
+- ignora imagens, CSS, fontes, mídia e binários;
+- reanalisa URLs, subdomínios, IPs e links dentro do escopo autorizado;
+- baixa e analisa apenas JavaScript pertencente ao domínio raiz e subdomínios;
+- processa `robots.txt`, `sitemap.xml` e índices de sitemap;
+- procura endpoints de API, rotas, métodos, parâmetros e autenticação;
+- procura chaves, tokens, senhas, regras de negócio e padrões sensíveis com contexto;
+- faz fuzzing de leitura em páginas administrativas, login, docs de API, Swagger/OpenAPI, GraphQL, debug, health, métricas, painéis e arquivos sensíveis;
+- identifica tecnologias, versões, WAF, CDN, cloud/provider e ASN;
+- verifica AXFR, indícios de subdomain takeover e buckets públicos AWS/GCP derivados de nomes do escopo;
+- executa probes controlados para path traversal, reflexão XSS e SSRF com canário local não sensível;
+- remove achados baseados em HTTP 404, páginas editoriais/blog e conteúdo sem impacto prático;
+- reporta somente achados relevantes e confirmáveis.
+
+O inventário de endpoints de API aparece separado dos achados. Ele mostra método, endpoint completo e as fontes exatas onde o endpoint foi encontrado.
+
+### Ollama e limites
+
+Variáveis úteis:
+
+```bash
+export BIRD_AI_MODEL="deepseek-r1:14b"
+export BIRD_AI_MAX_CALLS="6"
+export OLLAMA_BASE_URL="http://localhost:11434"
+export SHODAN_API_KEY="sua-chave"
+```
+
+Exemplo de execução manual com limites:
+
+```bash
+./tool-web-ai-analysis.sh \
+  --llm-max-calls 6 \
+  --page-limit 1500 \
+  --active-web-limit 400 \
+  --fuzz-limit 100 \
+  --bucket-limit 50 \
+  --rdap-limit 80 \
+  --sitemap-limit 60 \
+  --sitemap-url-limit 50000
+```
+
+Parâmetros importantes:
+
+- `--llm-max-calls`: limita quantos lotes semânticos serão enviados ao Ollama;
+- `--page-limit`: limita páginas priorizadas para nova requisição HTTP;
+- `--active-web-limit`: limita probes ativos de parâmetros;
+- `--fuzz-limit`: limita fuzzing de caminhos;
+- `--bucket-limit`: limita nomes testados em buckets AWS/GCP;
+- `--rdap-limit`: limita enriquecimento RDAP de IPs;
+- `--sitemap-limit`: limita documentos sitemap processados;
+- `--sitemap-url-limit`: limita URLs incorporadas a partir de sitemaps.
+
+Para acelerar bastante a IA em máquinas menores:
+
+```bash
+./tool-web-ai-analysis.sh \
+  --llm-max-calls 2 \
+  --page-limit 500 \
+  --active-web-limit 100 \
+  --fuzz-limit 40 \
+  --bucket-limit 20 \
+  --rdap-limit 30
+```
+
+Também é possível desativar partes ativas:
+
+```bash
+./tool-web-ai-analysis.sh --active-web-limit 0 --bucket-limit 0
+```
+
+Mesmo com limites menores, a extração determinística dos arquivos textuais úteis permanece ativa.
+
+## Regenerar somente o relatório
+
+Se os outputs já existem e você quer apenas reconstruir o HTML:
+
+```bash
+./tool-web-dashboard.sh
+```
+
+Se a IA já terminou, os arquivos `dashboard/assets/ai-data.js` e `dashboard/assets/ai-status.js` alimentam o menu `IA Findings`.
+
+## Boas práticas de execução
+
+- Use um domínio por execução em `target.txt`.
+- Apague ou arquive outputs antigos quando quiser uma rodada completamente limpa.
+- Ajuste os limites da IA conforme o tamanho do escopo.
+- Use `--full-http-methods` somente quando houver autorização explícita para métodos potencialmente sensíveis.
+- Revise o log da IA em `OUT-WEB-BIRD/<target>/<target>-bird-ai.log` quando o menu demorar a ser liberado.
+
+## Aviso
+
+Use somente em sistemas, domínios e redes para os quais exista autorização explícita. Métodos ativos, fuzzing, crawling e validações de exposição podem gerar carga e devem respeitar as regras do teste.
