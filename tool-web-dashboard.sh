@@ -11,6 +11,10 @@ OUT_DIR="${SCRIPT_DIR}/OUT-WEB-BIRD"
 DASHBOARD_DIR="${SCRIPT_DIR}/dashboard"
 ASSETS_DIR="${DASHBOARD_DIR}/assets"
 SHODAN_API_KEY="${SHODAN_API_KEY:-}"
+SCOPE_FILE="${OUT_DIR}/.current-scope"
+PRIMARY_DOMAIN=""
+REPORT_TITLE="W-BRID"
+AI_ENABLED="${BIRD_AI_ENABLED:-0}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -45,20 +49,36 @@ extract_base_domain() {
 
 build_scope() {
     > "$SCOPE_DOMAINS_FILE"
+    if [[ -s "$SCOPE_FILE" ]]; then
+        local saved_scope
+        saved_scope=$(head -n 1 "$SCOPE_FILE" | sed -E 's#^https?://##;s#/.*$##;s/:.*$//' | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+        [[ -n "$saved_scope" ]] && echo "$saved_scope" > "$SCOPE_DOMAINS_FILE"
+    fi
+    if [[ ! -s "$SCOPE_DOMAINS_FILE" ]]; then
     for target_dir in "$OUT_DIR"/*/; do
         [[ ! -d "$target_dir" ]] && continue
         local target=$(basename "$target_dir")
         [[ "$target" == "Host" || "$target" == "host" || ! "$target" =~ \. ]] && continue
         extract_base_domain "$target" >> "$SCOPE_DOMAINS_FILE"
     done
+    fi
     sort -u "$SCOPE_DOMAINS_FILE" -o "$SCOPE_DOMAINS_FILE"
+    PRIMARY_DOMAIN=$(head -n 1 "$SCOPE_DOMAINS_FILE")
+    [[ $(wc -l < "$SCOPE_DOMAINS_FILE" | tr -d ' ') -gt 1 ]] && PRIMARY_DOMAIN="MULTI-SCOPE"
+    REPORT_TITLE="W-BRID - ${PRIMARY_DOMAIN:-ESCOPO}"
+    export OUT_DIR DASHBOARD_DIR PRIMARY_DOMAIN REPORT_TITLE
     log_info "Escopo: $(cat "$SCOPE_DOMAINS_FILE" | tr '\n' ', ' | sed 's/,$//')"
 }
 
 is_in_scope() {
+    local candidate="${1,,}"
+    candidate="${candidate#*://}"
+    candidate="${candidate%%/*}"
+    candidate="${candidate%%:*}"
+    candidate="${candidate%.}"
     while IFS= read -r domain; do
         [[ -z "$domain" ]] && continue
-        echo "$1" | grep -qi "$domain" && return 0
+        [[ "$candidate" == "$domain" || "$candidate" == *."$domain" ]] && return 0
     done < "$SCOPE_DOMAINS_FILE"
     return 1
 }
@@ -83,6 +103,7 @@ SUBS_FILE="${TEMP_DIR}/all_subs.txt"
 IP_MAP_FILE="${TEMP_DIR}/ip_map.txt"       # format: subdomain|ip
 URLS_FILE="${TEMP_DIR}/urls_clean.txt"
 CRAFTJS_FILE="${TEMP_DIR}/craftjs_parsed.json"
+FINAL_FINDINGS_FILE="${TEMP_DIR}/final_findings.jsonl"
 SHODAN_CACHE="${TEMP_DIR}/shodan_cache"
 
 process_all_data() {
@@ -91,7 +112,7 @@ process_all_data() {
     local subs_raw="${TEMP_DIR}/subs_raw.txt"
     local urls_raw="${TEMP_DIR}/urls_raw.txt"
     > "$subs_raw" && > "$urls_raw"
-    > "$IP_MAP_FILE" && > "$CRAFTJS_FILE"
+    > "$IP_MAP_FILE" && > "$CRAFTJS_FILE" && > "$FINAL_FINDINGS_FILE"
     > "${TEMP_DIR}/targets.txt"
     mkdir -p "$SHODAN_CACHE"
 
@@ -100,6 +121,7 @@ process_all_data() {
     for target_dir in "$OUT_DIR"/*/; do
         [[ ! -d "$target_dir" ]] && continue
         local target=$(basename "$target_dir")
+        is_in_scope "$target" || continue
         echo "$target" >> "${TEMP_DIR}/targets.txt"
 
         for file in "$target_dir"/*; do
@@ -162,6 +184,13 @@ process_all_data() {
                         fi
                     done < "$file" 2>/dev/null ;;
 
+                *-bird-craftjs.json)
+                    jq -c '.endpoints[]? | {titulo:("Endpoint " + (.method // "GET") + " [" + (.confidence // "n/a") + "]"),dado:(.url // ""),url:(.sources[0] // "")}' "$file" 2>/dev/null >> "$CRAFTJS_FILE"
+                    jq -c '.findings[]? | {titulo:(.category // "Achado"),dado:(.value // ""),url:(.sources[0] // "")}' "$file" 2>/dev/null >> "$CRAFTJS_FILE" ;;
+
+                *-bird-final-findings.json)
+                    jq -c --arg source "$fname" '.findings[]? + {_source_file:$source}' "$file" 2>/dev/null >> "$FINAL_FINDINGS_FILE" ;;
+
                 *katana.json)
                     if command -v jq &>/dev/null; then
                         jq -r '.request.endpoint // empty' "$file" 2>/dev/null >> "$urls_raw"
@@ -170,21 +199,12 @@ process_all_data() {
         done
     done
 
-    # Build scope pattern
-    local pattern=""
-    while IFS= read -r domain; do
-        [[ -z "$domain" ]] && continue
-        pattern="${pattern:+$pattern\|}$domain"
-    done < "$SCOPE_DOMAINS_FILE"
-
     # Clean + dedupe + scope filter subdomains
     sed -i 's/ (FQDN)//g; s/(FQDN)//g; s/ (IPAddress)//g; s/(IPAddress)//g' "$subs_raw" 2>/dev/null
-    sort -u "$subs_raw" | grep -v '^$' | grep '\.' | grep -v 'virustotal' | \
-        grep -i "$pattern" > "$SUBS_FILE" 2>/dev/null || true
+    sort -u "$subs_raw" | grep -v '^$' | grep '\.' | grep -v 'virustotal' | while IFS= read -r item; do is_in_scope "$item" && echo "$item"; done > "$SUBS_FILE" 2>/dev/null || true
 
     # Clean + scope filter URLs
-    sort -u "$urls_raw" | grep -E '^https?://' | \
-        grep -i "$pattern" > "$URLS_FILE" 2>/dev/null || true
+    sort -u "$urls_raw" | grep -E '^https?://' | while IFS= read -r item; do is_in_scope "$item" && echo "$item"; done > "$URLS_FILE" 2>/dev/null || true
 
     # Clean IP map (dedupe)
     sort -u "$IP_MAP_FILE" -o "$IP_MAP_FILE" 2>/dev/null
@@ -388,193 +408,27 @@ enrich_with_shodan() {
 }
 
 # ============================================
-# RULE-BASED ANALYSIS (no LLM required)
-# ============================================
-
-generate_analysis() {
-    local active=$(grep '|active|' "${TEMP_DIR}/validated_subs.txt" | wc -l | tr -d '[:space:]')
-    local inactive=$(grep '|inactive|' "${TEMP_DIR}/validated_subs.txt" | wc -l | tr -d '[:space:]')
-    local total_urls=$(wc -l < "$URLS_FILE" | tr -d '[:space:]')
-    local total_brid=$(wc -l < "$CRAFTJS_FILE" 2>/dev/null | tr -d '[:space:]')
-    local scope=$(cat "$SCOPE_DOMAINS_FILE" | tr '\n' ', ' | sed 's/,$//')
-    local total_subs=$(( ${active:-0} + ${inactive:-0} ))
-    local unique_ips=$(grep '|active|' "${TEMP_DIR}/validated_subs.txt" | cut -d'|' -f3 | tr ',' '\n' | sort -u | grep -v '^$' | wc -l | tr -d ' ')
-
-    # Analyze Shodan data for all IPs
-    local total_ports=0 total_vulns=0 exposed_services="" vuln_list=""
-    local has_ftp=false has_ssh=false has_rdp=false has_db=false has_http=false has_admin=false
-    for cache_file in "${SHODAN_CACHE}"/*.json; do
-        [[ -f "$cache_file" ]] || continue
-        local ip_name=$(basename "$cache_file" .json)
-        local ip_data=$(python3 -c "
-import json,sys
-try:
-    d=json.load(sys.stdin)
-    ports=d.get('ports',[])
-    vulns=d.get('vulns',[])
-    print(f'{len(ports)}|{len(vulns)}|{\";\".join(str(p) for p in ports)}|{\";\".join(vulns[:5])}')
-except: print('0|0||')
-" < "$cache_file" 2>/dev/null)
-        local np=$(echo "$ip_data" | cut -d'|' -f1)
-        local nv=$(echo "$ip_data" | cut -d'|' -f2)
-        local ports_str=$(echo "$ip_data" | cut -d'|' -f3)
-        local vulns_str=$(echo "$ip_data" | cut -d'|' -f4)
-        np=${np:-0}; nv=${nv:-0}
-        total_ports=$((total_ports + $np))
-        total_vulns=$((total_vulns + $nv))
-        [[ "$ports_str" == *21* ]] && has_ftp=true
-        [[ "$ports_str" == *22* ]] && has_ssh=true
-        [[ "$ports_str" == *3389* ]] && has_rdp=true
-        [[ "$ports_str" == *3306* || "$ports_str" == *5432* || "$ports_str" == *27017* || "$ports_str" == *6379* ]] && has_db=true
-        [[ "$ports_str" == *80* || "$ports_str" == *443* || "$ports_str" == *8080* || "$ports_str" == *8443* ]] && has_http=true
-        [[ "$ports_str" == *9090* || "$ports_str" == *3000* || "$ports_str" == *8888* ]] && has_admin=true
-        [[ -n "$vulns_str" ]] && vuln_list="${vuln_list}${vuln_list:+; }${ip_name}: ${vulns_str}"
-    done
-
-    # Analyze sensitive data types from BRID-CRAFTJS
-    local api_keys=0 tokens=0 routes=0 emails=0 passwords=0
-    if [[ -f "$CRAFTJS_FILE" && -s "$CRAFTJS_FILE" ]]; then
-        api_keys=$(grep -ci '\(api.key\|apikey\|api_key\|secret\)' "$CRAFTJS_FILE" 2>/dev/null || echo 0)
-        tokens=$(grep -ci '\(token\|bearer\|jwt\|auth\)' "$CRAFTJS_FILE" 2>/dev/null || echo 0)
-        routes=$(grep -ci '\(route\|endpoint\|api.route\|path\)' "$CRAFTJS_FILE" 2>/dev/null || echo 0)
-        emails=$(grep -ci '\(email\|mail\|@\)' "$CRAFTJS_FILE" 2>/dev/null || echo 0)
-        passwords=$(grep -ci '\(password\|passwd\|pwd\|senha\)' "$CRAFTJS_FILE" 2>/dev/null || echo 0)
-    fi
-
-    # Determine risk level
-    local risk_level="BAIXO"
-    if [[ $total_vulns -gt 0 ]] || [[ $passwords -gt 0 ]] || $has_rdp || $has_db; then
-        risk_level="ALTO"
-    elif [[ $total_brid -gt 100 ]] || $has_ftp || [[ $active -gt 20 ]]; then
-        risk_level="MEDIO"
-    fi
-    [[ $total_vulns -gt 5 ]] && risk_level="CRITICO"
-
-    # Build executive summary
-    local summary="Reconhecimento do escopo ${scope} identificou ${active} subdomínios ativos e ${inactive} inativos, mapeados para ${unique_ips} IPs únicos. Foram coletadas ${total_urls} URLs e ${total_brid} dados sensíveis em JavaScript. A análise de portas identificou ${total_ports} serviços expostos com ${total_vulns} vulnerabilidades conhecidas (CVEs)."
-
-    # Build attack surface description
-    local attack_surface="${unique_ips} IPs com ${total_ports} portas abertas."
-    $has_http && attack_surface="${attack_surface} Servidores web detectados."
-    $has_ftp && attack_surface="${attack_surface} FTP exposto."
-    $has_ssh && attack_surface="${attack_surface} SSH acessível."
-    $has_rdp && attack_surface="${attack_surface} RDP exposto."
-    $has_db && attack_surface="${attack_surface} Banco de dados acessível externamente."
-    $has_admin && attack_surface="${attack_surface} Painéis administrativos detectados."
-
-    # Convert shell booleans to Python booleans
-    local py_ftp="False"; $has_ftp && py_ftp="True"
-    local py_ssh="False"; $has_ssh && py_ssh="True"
-    local py_rdp="False"; $has_rdp && py_rdp="True"
-    local py_db="False"; $has_db && py_db="True"
-    local py_http="False"; $has_http && py_http="True"
-    local py_admin="False"; $has_admin && py_admin="True"
-
-    # Build findings
-    local findings="[]"
-    findings=$(python3 -c "
-import json
-f=[]
-f.append('${active} subdominios ativos mapeados para ${unique_ips} IPs unicos no escopo ${scope}')
-f.append('${total_urls} URLs coletadas - superficie web mapeada')
-if int('${total_brid}') > 0: f.append('${total_brid} dados sensiveis encontrados em JavaScript')
-if int('${total_ports}') > 0: f.append('${total_ports} portas/servicos expostos via Shodan')
-if int('${total_vulns}') > 0: f.append('${total_vulns} CVEs conhecidas associadas aos IPs')
-if ${py_ftp}: f.append('FTP (porta 21) exposto - possivel vetor de acesso')
-if ${py_rdp}: f.append('RDP (porta 3389) acessivel externamente')
-if ${py_db}: f.append('Bancos de dados com acesso externo detectados')
-if ${py_admin}: f.append('Paineis administrativos (Grafana/Prometheus) detectados')
-print(json.dumps(f[:6], ensure_ascii=False))
-" 2>/dev/null)
-
-    # Build vulnerabilities
-    local vulnerabilities="[]"
-    vulnerabilities=$(python3 -c "
-import json
-v=[]
-if int('${total_vulns}') > 0: v.append('${total_vulns} CVEs conhecidas nos IPs do escopo')
-if ${py_ftp}: v.append('FTP exposto na porta 21 - verificar acesso anonimo')
-if ${py_rdp}: v.append('RDP exposto - risco de brute-force e exploits (BlueKeep)')
-if ${py_db}: v.append('Banco de dados acessivel externamente - risco de exfiltracao')
-if int('${passwords}') > 0: v.append('Credenciais encontradas em JavaScript')
-if int('${api_keys}') > 0: v.append('API keys/secrets expostos em JavaScript')
-if int('${inactive}') > int('${active}'): v.append('Mais subdominios inativos que ativos - possivel subdomain takeover')
-if not v: v.append('Nenhuma vulnerabilidade critica identificada automaticamente')
-print(json.dumps(v[:5], ensure_ascii=False))
-" 2>/dev/null)
-
-    # Build sensitive data findings
-    local sensitive_data="[]"
-    sensitive_data=$(python3 -c "
-import json
-s=[]
-if int('${api_keys}') > 0: s.append('${api_keys} referencias a API keys/secrets em JavaScript')
-if int('${tokens}') > 0: s.append('${tokens} referencias a tokens/JWT/auth em JavaScript')
-if int('${routes}') > 0: s.append('${routes} rotas/endpoints de API expostos em JavaScript')
-if int('${emails}') > 0: s.append('${emails} referencias a e-mails em JavaScript')
-if int('${passwords}') > 0: s.append('${passwords} referencias a senhas em JavaScript')
-if not s and int('${total_brid}') > 0: s.append('${total_brid} dados sensiveis diversos em JavaScript')
-if not s: s.append('Nenhum dado sensivel identificado')
-print(json.dumps(s[:5], ensure_ascii=False))
-" 2>/dev/null)
-
-    # Build recommendations
-    local recommendations="[]"
-    recommendations=$(python3 -c "
-import json
-r=[]
-if int('${total_vulns}') > 0: r.append('Priorizar correcao das ${total_vulns} CVEs identificadas')
-if int('${api_keys}') > 0 or int('${passwords}') > 0: r.append('Remover credenciais e API keys dos arquivos JavaScript')
-if ${py_ftp}: r.append('Desabilitar FTP ou migrar para SFTP com autenticacao forte')
-if ${py_rdp}: r.append('Restringir acesso RDP via VPN e implementar MFA')
-if ${py_db}: r.append('Restringir acesso a bancos de dados - apenas IPs internos/VPN')
-if int('${inactive}') > 5: r.append('Investigar ${inactive} subdominios inativos para subdomain takeover')
-r.append('Implementar WAF e monitoramento continuo de exposicao')
-r.append('Revisar configuracoes de CORS e headers de seguranca')
-print(json.dumps(r[:6], ensure_ascii=False))
-" 2>/dev/null)
-
-    # Output JSON — pipe through stdin to avoid quoting issues
-    echo "${summary}|DELIM|${risk_level}|DELIM|${attack_surface}" | python3 -c "
-import json,sys
-parts = sys.stdin.read().strip().split('|DELIM|')
-summary = parts[0] if len(parts) > 0 else ''
-risk = parts[1] if len(parts) > 1 else 'MEDIO'
-surface = parts[2] if len(parts) > 2 else ''
-result = {
-    'executive_summary': summary,
-    'risk_level': risk,
-    'attack_surface': surface,
-    'key_findings': ${findings:-[]},
-    'vulnerabilities': ${vulnerabilities:-[]},
-    'sensitive_data': ${sensitive_data:-[]},
-    'recommendations': ${recommendations:-[]}
-}
-print(json.dumps(result, ensure_ascii=False))
-" 2>/dev/null || echo '{"executive_summary":"Análise automática realizada.","risk_level":"MEDIO","attack_surface":"Serviços web identificados.","key_findings":["Subdomínios mapeados","URLs coletadas"],"vulnerabilities":["Verificar serviços expostos"],"sensitive_data":["Dados em JavaScript"],"recommendations":["Revisar exposição"]}'
-}
-
-# ============================================
 # CSS + JS (same premium design)
 # ============================================
 
 generate_css() {
     cat > "${ASSETS_DIR}/style.css" << 'EOFCSS'
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--primary:#6366f1;--primary-light:#818cf8;--secondary:#8b5cf6;--success:#10b981;--warning:#f59e0b;--danger:#ef4444;--info:#3b82f6;--dark:#1e293b;--darker:#0f172a;--darkest:#020617;--light:#f8fafc;--gray:#64748b;--glass:rgba(15,23,42,0.6);--glass-border:rgba(99,102,241,0.15);--glow:rgba(99,102,241,0.15)}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--darkest);background-image:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,0.08) 0%,transparent 50%),radial-gradient(ellipse at 80% 20%,rgba(139,92,246,0.06) 0%,transparent 50%),radial-gradient(ellipse at 50% 80%,rgba(16,185,129,0.04) 0%,transparent 50%);color:var(--light);min-height:100vh;line-height:1.6}
+:root{--primary:#ef4444;--primary-light:#f87171;--secondary:#dc2626;--success:#10b981;--warning:#f59e0b;--danger:#ef4444;--info:#38bdf8;--dark:#1e293b;--darker:#0f172a;--darkest:#0b1120;--light:#f8fafc;--gray:#64748b;--glass:rgba(30,41,59,0.52);--glass-border:rgba(255,255,255,0.10);--glow:rgba(239,68,68,0.14)}
+body{font-family:'Inter',system-ui,sans-serif;background-color:var(--darker);background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px),radial-gradient(circle at 80% 10%,rgba(56,189,248,.07),transparent 34%);background-size:50px 50px,50px 50px,auto;color:var(--light);min-height:100vh;line-height:1.6}
+h1,h2,h3,h4{font-family:'Urbanist','Inter',sans-serif}
 .container{max-width:1400px;margin:0 auto;padding:2rem}
-nav{background:rgba(2,6,23,0.85);backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid var(--glass-border);padding:0.75rem 0;position:sticky;top:0;z-index:1000;box-shadow:0 4px 30px rgba(0,0,0,0.3)}
+nav{background:rgba(15,23,42,0.9);backdrop-filter:blur(16px);border-bottom:1px solid var(--glass-border);padding:0.75rem 0;position:sticky;top:0;z-index:1000;box-shadow:0 4px 30px rgba(0,0,0,0.3)}
 nav .container{display:flex;justify-content:space-between;align-items:center;padding:0 2rem}
-nav h1{font-size:1.3rem;font-weight:700;background:linear-gradient(135deg,#818cf8,#c084fc,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+nav h1{font-size:1.25rem;font-weight:900;letter-spacing:.08em;color:#fff;white-space:nowrap}nav h1 span{color:var(--primary);font-family:'JetBrains Mono',monospace;font-size:.82rem;letter-spacing:0}
 nav .nav-links{display:flex;gap:0.3rem;flex-wrap:wrap}
 nav .nav-links a{color:#94a3b8;text-decoration:none;padding:0.4rem 0.75rem;border-radius:0.5rem;transition:all 0.3s;font-size:0.82rem;font-weight:500;border:1px solid transparent}
-nav .nav-links a:hover,nav .nav-links a.active{color:white;background:rgba(99,102,241,0.15);border-color:var(--glass-border);transform:translateY(-1px)}
+nav .nav-links a:hover,nav .nav-links a.active{color:white;background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,.32);transform:translateY(-1px)}
 .card{background:var(--glass);backdrop-filter:blur(20px) saturate(180%);border:1px solid var(--glass-border);border-radius:1rem;padding:1.5rem;margin-bottom:1.5rem;transition:all 0.4s;position:relative;overflow:hidden}
 .card::before{content:'';position:absolute;top:0;left:0;width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(99,102,241,0.3),transparent)}
 .card:hover{border-color:rgba(99,102,241,0.3);box-shadow:0 8px 32px var(--glow)}
-.hero-card{background:linear-gradient(135deg,rgba(99,102,241,0.1),rgba(139,92,246,0.05));border-left:3px solid var(--primary)}
+.hero-card{background:linear-gradient(135deg,rgba(239,68,68,.10),rgba(56,189,248,.035));border-left:3px solid var(--primary);padding:2.25rem}.hero-card .eyebrow{font:600 .72rem 'JetBrains Mono',monospace;color:var(--primary);letter-spacing:.14em;text-transform:uppercase}.hero-card h2{font-size:clamp(2rem,5vw,4rem);line-height:1.05;margin:.55rem 0}.hero-card p{color:#cbd5e1;max-width:760px}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1.25rem;margin-bottom:2rem}
 .stat-card{background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--glass-border);border-radius:1rem;padding:1.5rem;text-align:center;transition:all 0.4s;position:relative;overflow:hidden}
 .stat-card::after{content:'';position:absolute;bottom:0;left:0;width:100%;height:3px;background:linear-gradient(90deg,var(--primary),var(--secondary));opacity:0;transition:opacity 0.3s}
@@ -636,9 +490,13 @@ code{background:rgba(0,0,0,0.4);padding:0.15rem 0.45rem;border-radius:0.3rem;fon
 .cmd-copy.copied{background:rgba(16,185,129,0.15);color:#6ee7b7;border-left-color:#10b981}
 .cmd-copy.copied::after{content:'✅ Copied!';position:absolute;left:50%;bottom:calc(100% + 4px);transform:translateX(-50%);font-size:0.65rem;color:#6ee7b7;background:#1e293b;padding:2px 8px;border-radius:4px;border:1px solid rgba(110,231,183,0.3);white-space:nowrap;z-index:10}
 .ip-cell code{display:block;margin:1px 0}
+.port-chart{display:grid;gap:.85rem}.port-row{display:grid;grid-template-columns:115px 1fr 70px;gap:1rem;align-items:center}.port-label{font:600 .78rem 'JetBrains Mono',monospace;color:#e2e8f0}.port-track{height:12px;border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden}.port-bar{height:100%;min-width:4px;background:linear-gradient(90deg,var(--info),#0ea5e9);box-shadow:0 0 14px rgba(56,189,248,.24)}.port-row.sensitive .port-bar{background:linear-gradient(90deg,var(--primary),#dc2626);box-shadow:0 0 14px rgba(239,68,68,.26)}.port-count{font:600 .72rem 'JetBrains Mono',monospace;color:#94a3b8;text-align:right}
+.scope-meta{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.2rem}.scope-pill{border:1px solid rgba(56,189,248,.25);background:rgba(56,189,248,.07);color:#7dd3fc;border-radius:3px;padding:.35rem .65rem;font:500 .72rem 'JetBrains Mono',monospace}
+.ai-nav.is-disabled{display:none}.ai-nav.is-pending{pointer-events:none;opacity:.65;border-style:dashed}.ai-nav.is-ready{color:#fff;border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.08)}
+.finding-card{border-left:3px solid #64748b}.finding-card.severity-critical,.finding-card.severity-high{border-left-color:#ef4444}.finding-card.severity-medium{border-left-color:#f59e0b}.finding-card.severity-low{border-left-color:#38bdf8}.finding-meta{display:flex;gap:.5rem;flex-wrap:wrap;margin:.55rem 0}.finding-meta span{font:500 .7rem 'JetBrains Mono',monospace;color:#94a3b8;border:1px solid rgba(255,255,255,.09);padding:.2rem .45rem;border-radius:3px}.evidence-block{white-space:pre-wrap;word-break:break-word;background:#020617;border:1px solid rgba(56,189,248,.13);padding:.85rem;border-radius:4px;color:#cbd5e1;font:.74rem/1.65 'JetBrains Mono',monospace}.evidence-block a{display:inline-block;max-width:100%;margin:.12rem 0;padding:.16rem .38rem;border-left:2px solid #f59e0b;border-radius:3px;background:rgba(245,158,11,.11);color:#fde68a;text-decoration:none;overflow-wrap:anywhere;word-break:break-word}.evidence-block a:hover{background:rgba(245,158,11,.2);color:#fff7d6}.api-endpoint-link{display:inline-block;max-width:100%;padding:.24rem .42rem;border:1px solid rgba(52,211,153,.3);border-radius:4px;background:rgba(16,185,129,.1);color:#a7f3d0;text-decoration:none;font:500 .74rem/1.55 'JetBrains Mono',monospace;overflow-wrap:anywhere;word-break:break-word}.api-endpoint-link:hover{background:rgba(16,185,129,.19);border-color:rgba(110,231,183,.55);color:#ecfdf5}.empty-state{text-align:center;padding:4rem 1rem;color:#64748b}.section-number{font:700 .75rem 'JetBrains Mono',monospace;color:var(--primary);letter-spacing:.12em}.quick-links{display:flex;gap:.55rem;flex-wrap:wrap;margin-top:1rem}.quick-links a{color:#cbd5e1;text-decoration:none;border-bottom:1px solid rgba(239,68,68,.4);font:600 .75rem 'JetBrains Mono',monospace}
 @keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
 .card,.stat-card-link,.table-container{animation:fadeInUp 0.5s ease forwards}
-@media(max-width:768px){nav .container{flex-direction:column;gap:0.75rem}.stats-grid{grid-template-columns:1fr 1fr}.container{padding:1rem}table{font-size:0.75rem}}
+@media(max-width:768px){nav .container{flex-direction:column;gap:0.75rem}.stats-grid{grid-template-columns:1fr 1fr}.container{padding:1rem}table{font-size:0.75rem}.port-row{grid-template-columns:90px 1fr 55px}}
 EOFCSS
 }
 
@@ -677,7 +535,7 @@ function exportCSV(){
         csv.push(Array.from(cols).map(c=>'"'+c.textContent.replace(/"/g,'""').trim()+'"').join(','));
     });
     const b=new Blob([csv.join('\n')],{type:'text/csv'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='bird-llm-export.csv';a.click();
+    const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='w-brid-export.csv';a.click();
 }
 function exportJSON(){
     const t=document.querySelector('table');if(!t)return;
@@ -688,10 +546,18 @@ function exportJSON(){
         const o={};r.querySelectorAll('td').forEach((td,i)=>{if(h[i])o[h[i]]=td.textContent.trim()});d.push(o);
     });
     const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='bird-llm-export.json';a.click();
+    const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='w-brid-export.json';a.click();
 }
 document.addEventListener('DOMContentLoaded',function(){
     initFilters();
+    const ai=window.WBRID_AI_STATUS||{status:'disabled'};
+    document.querySelectorAll('[data-ai-link]').forEach(link=>{
+        link.classList.remove('is-disabled','is-pending','is-ready');
+        if(ai.status==='ready'){link.classList.add('is-ready');link.href='ai-findings.html';link.textContent='IA Findings'}
+        else if(ai.status==='processing'||ai.status==='pending'){link.classList.add('is-pending');link.removeAttribute('href');link.textContent='IA Findings';link.title='Análise em processamento'}
+        else if(ai.status==='error'){link.classList.add('is-pending');link.removeAttribute('href');link.textContent='IA Findings';link.title='Falha na análise IA'}
+        else{link.classList.add('is-disabled')}
+    });
     // Dropdown toggle
     document.addEventListener('click',function(e){
         const toggle=e.target.closest('.dropdown-toggle');
@@ -724,13 +590,16 @@ EOFJS
 generate_nav() {
     local current="${1:-index}"
     cat <<EOFNAV
+    <script src="assets/ai-status.js"></script>
     <nav>
         <div class="container">
-            <h1>🦅 Bird Tool Web Analyzer <span class="llm-badge">📊 Auto</span></h1>
+            <h1>W-BRID <span>— ${PRIMARY_DOMAIN:-ESCOPO}</span></h1>
             <div class="nav-links">
                 <a href="index.html" $([ "$current" = "index" ] && echo 'class="active"')>Dashboard</a>
                 <a href="subdomains.html" $([ "$current" = "subdomains" ] && echo 'class="active"')>Subdomínios</a>
-                <a href="brid-craftjs.html" $([ "$current" = "brid" ] && echo 'class="active"')>BRID-CRAFTJS</a>
+                <a href="brid-craftjs.html" $([ "$current" = "brid" ] && echo 'class="active"')>Bird-Craft</a>
+                <a data-ai-link class="ai-nav is-disabled">IA Findings</a>
+                <a href="final-findings.html" $([ "$current" = "final" ] && echo 'class="active"')>Final Findings</a>
                 <a href="urls.html" $([ "$current" = "urls" ] && echo 'class="active"')>URLs</a>
                 <a href="tree.html" $([ "$current" = "tree" ] && echo 'class="active"')>Tree</a>
                 <a href="dns.html" $([ "$current" = "dns" ] && echo 'class="active"')>DNS</a>
@@ -744,150 +613,79 @@ EOFNAV
 # PAGE: INDEX
 # ============================================
 
+
 generate_index() {
-    local analysis="$1"
-    local active=$(grep -c '|active|' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null | tr -d '[:space:]' || echo 0)
-    local inactive=$(grep -c '|inactive|' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null | tr -d '[:space:]' || echo 0)
-    local total_subs=$(( ${active:-0} + ${inactive:-0} ))
-#   local total_subs=$((active + inactive))
-    local total_urls=$(wc -l < "$URLS_FILE" | tr -d ' ')
-    local total_brid=$(wc -l < "$CRAFTJS_FILE" 2>/dev/null | tr -d ' ')
-    local unique_ips=$(grep '|active|' "${TEMP_DIR}/validated_subs.txt" | cut -d'|' -f3 | tr ',' '\n' | sort -u | grep -v '^$' | wc -l | tr -d ' ')
+    local active inactive unique_ips total_urls port_chart
+    active=$(awk -F'|' '$2=="active"{count++} END{print count+0}' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null)
+    inactive=$(awk -F'|' '$2=="inactive"{count++} END{print count+0}' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null)
+    unique_ips=$(awk -F'|' '{print $3}' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sort -u | wc -l | tr -d '[:space:]')
+    total_urls=$(wc -l < "$URLS_FILE" 2>/dev/null | tr -d '[:space:]')
+    active=${active:-0}; inactive=${inactive:-0}; unique_ips=${unique_ips:-0}; total_urls=${total_urls:-0}
+    port_chart=$(SHODAN_CACHE="$SHODAN_CACHE" VALIDATED_SUBS="${TEMP_DIR}/validated_subs.txt" python3 <<'PYEOF'
+import glob, html, json, os
+from collections import defaultdict
 
-    local exec_summary risk_level findings_html recs_html attack_surface vulns_html sensitive_html
-    exec_summary=$(echo "$analysis" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('executive_summary','Análise realizada.'))" 2>/dev/null)
-    risk_level=$(echo "$analysis" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('risk_level','MEDIO'))" 2>/dev/null)
-    attack_surface=$(echo "$analysis" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('attack_surface',''))" 2>/dev/null)
-    findings_html=$(echo "$analysis" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for f in d.get('key_findings',[]): print(f'<li>{f}</li>')
-" 2>/dev/null)
-    vulns_html=$(echo "$analysis" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for v in d.get('vulnerabilities',[]): print(f'<li style=\"color:#fca5a5\">{v}</li>')
-" 2>/dev/null)
-    sensitive_html=$(echo "$analysis" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for s in d.get('sensitive_data',[]): print(f'<li style=\"color:#fcd34d\">{s}</li>')
-" 2>/dev/null)
-    recs_html=$(echo "$analysis" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-for r in d.get('recommendations',[]): print(f'<li>{r}</li>')
-" 2>/dev/null)
+cache_dir = os.environ["SHODAN_CACHE"]
+validated = os.environ["VALIDATED_SUBS"]
+ip_hosts = defaultdict(set)
+try:
+    for line in open(validated, encoding="utf-8", errors="replace"):
+        parts = line.strip().split("|")
+        if len(parts) >= 3:
+            for ip in parts[2].split(","):
+                if ip.strip():
+                    ip_hosts[ip.strip()].add(parts[0])
+except OSError:
+    pass
 
-    local risk_color="#fcd34d"
-    [[ "$risk_level" == "CRITICO" ]] && risk_color="#ef4444"
-    [[ "$risk_level" == "ALTO" ]] && risk_color="#fca5a5"
-    [[ "$risk_level" == "BAIXO" ]] && risk_color="#6ee7b7"
+port_hosts = defaultdict(set)
+for filename in glob.glob(os.path.join(cache_dir, "*.json")):
+    ip = os.path.basename(filename)[:-5]
+    try:
+        data = json.load(open(filename, encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    hosts = ip_hosts.get(ip) or {ip}
+    for raw_port in data.get("ports", []):
+        try:
+            port_hosts[int(raw_port)].update(hosts)
+        except (TypeError, ValueError):
+            pass
 
+if port_hosts:
+    services = {21:"FTP",22:"SSH",25:"SMTP",53:"DNS",80:"HTTP",110:"POP3",143:"IMAP",443:"HTTPS",445:"SMB",993:"IMAPS",995:"POP3S",1433:"MSSQL",2375:"DOCKER",3306:"MYSQL",3389:"RDP",5432:"POSTGRES",5900:"VNC",6379:"REDIS",8080:"HTTP-ALT",8443:"HTTPS-ALT",9200:"ELASTIC",27017:"MONGODB"}
+    sensitive = {21,22,23,445,1433,2375,3306,3389,5432,5900,6379,9200,27017}
+    rows = sorted(port_hosts.items(), key=lambda item: (-len(item[1]), item[0]))[:5]
+    maximum = max(len(hosts) for _, hosts in rows) or 1
+    print('<section class="card"><span class="section-number">[01] EXPOSIÇÃO DE REDE</span><h3>Portas mais recorrentes</h3><div class="port-chart" style="margin-top:1.25rem">')
+    for port, hosts in rows:
+        service = services.get(port, "TCP")
+        width = max(4, round(len(hosts) * 100 / maximum))
+        klass = "port-row sensitive" if port in sensitive else "port-row"
+        title = html.escape(", ".join(sorted(hosts)[:12]), quote=True)
+        print(f'<div class="{klass}" title="{title}"><div class="port-label">{port}/{service}</div><div class="port-track"><div class="port-bar" style="width:{width}%"></div></div><div class="port-count">{len(hosts)} host(s)</div></div>')
+    print('</div><div class="quick-links"><a href="subdomains.html">ver infraestrutura detalhada →</a></div></section>')
+PYEOF
+)
     cat > "${DASHBOARD_DIR}/index.html" <<EOFHTML
 <!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Bird Tool Web - Dashboard</title><link rel="stylesheet" href="assets/style.css"></head><body>
+<title>${REPORT_TITLE}</title><link rel="stylesheet" href="assets/style.css"></head><body>
 $(generate_nav "index")
-<div class="container">
-    <div class="card hero-card">
-        <h2>📊 Dashboard de Segurança <span class="llm-badge">📊 Análise Automática</span></h2>
-        <p>Reconhecimento completo com análise automática baseada em regras</p>
-        <p><small style="color:#64748b">Gerado: $(date '+%Y-%m-%d %H:%M')$([ -n "$SHODAN_API_KEY" ] && echo " • Shodan: ✅")</small></p>
-    </div>
-    <div class="stats-grid">
-        <a href="subdomains.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon">🟢</div><div class="stat-number" data-count="$active">$active</div><div class="stat-label">Subs Ativos</div></div></a>
-        <a href="subdomains.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon">🔴</div><div class="stat-number" data-count="$inactive">$inactive</div><div class="stat-label">Subs Inativos</div></div></a>
-        <a href="subdomains.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon">🔢</div><div class="stat-number" data-count="$unique_ips">$unique_ips</div><div class="stat-label">IPs Únicos</div></div></a>
-        <a href="urls.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon">🔗</div><div class="stat-number" data-count="$total_urls">$total_urls</div><div class="stat-label">URLs</div></div></a>
-        <a href="brid-craftjs.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon">🔑</div><div class="stat-number" data-count="$total_brid">$total_brid</div><div class="stat-label">Dados Sensíveis</div></div></a>
-    </div>
-    <div class="card" style="border-left:3px solid ${risk_color};">
-        <h3>📊 Análise de Risco — Nível: <strong style="color:${risk_color}">${risk_level}</strong></h3>
-        <p style="margin:1rem 0;line-height:1.8;">$exec_summary</p>
-        $([ -n "$attack_surface" ] && echo "<div style='margin:1rem 0;padding:0.8rem;background:rgba(99,102,241,0.08);border-radius:0.5rem;border-left:2px solid #6366f1'><h4 style='color:#a5b4fc;margin-bottom:0.3rem'>🎯 Superfície de Ataque</h4><p style='color:#cbd5e1;font-size:0.9rem'>$attack_surface</p></div>")
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.5rem;margin-top:1rem;">
-            <div><h4 style="color:#a5b4fc;margin-bottom:0.5rem">🔍 Principais Achados</h4><ul style="list-style:none;padding:0">$findings_html</ul></div>
-            <div><h4 style="color:#fca5a5;margin-bottom:0.5rem">⚠️ Vulnerabilidades</h4><ul style="list-style:none;padding:0">$vulns_html</ul></div>
-            <div><h4 style="color:#6ee7b7;margin-bottom:0.5rem">💡 Recomendações</h4><ul style="list-style:none;padding:0">$recs_html</ul></div>
-        </div>
-        $([ -n "$sensitive_html" ] && echo "<div style='margin-top:1rem;padding:0.8rem;background:rgba(251,191,36,0.06);border-radius:0.5rem;border-left:2px solid #f59e0b'><h4 style='color:#fcd34d;margin-bottom:0.3rem'>🔑 Dados Sensíveis Identificados</h4><ul style='list-style:none;padding:0'>$sensitive_html</ul></div>")
-    </div>
-$(python3 -c "
-import json, os, glob, html as h
-
-shodan_dir = '${SHODAN_CACHE}'
-subs_file = '${TEMP_DIR}/validated_subs.txt'
-
-# Collect data
-ips_ports = {}
-for f in glob.glob(os.path.join(shodan_dir, '*.json')):
-    ip = os.path.basename(f).replace('.json','')
-    try:
-        d = json.load(open(f))
-        ips_ports[ip] = d.get('ports', [])
-    except: pass
-
-active_subs = []
-try:
-    for line in open(subs_file):
-        parts = line.strip().split('|')
-        if len(parts) >= 3 and parts[1] == 'active':
-            active_subs.append((parts[0], parts[2]))
-except: pass
-
-# Determine what to suggest
-has_http = any(p in ports for ports in ips_ports.values() for p in [80,443,8080,8443])
-has_ftp = any(21 in ports for ports in ips_ports.values())
-has_ssh = any(22 in ports for ports in ips_ports.values())
-has_rdp = any(3389 in ports for ports in ips_ports.values())
-has_db = any(p in ports for ports in ips_ports.values() for p in [3306,5432,27017,6379,1433])
-all_ips = ' '.join(ips_ports.keys())
-all_active = ' '.join([s[0] for s in active_subs])
-
-print('<div class=\"card\" style=\"border-left:3px solid #818cf8;margin-top:1.5rem\">')
-print('<h3>🚀 Próximos Passos — Exploração da Superfície de Ataque</h3>')
-print('<p style=\"color:#94a3b8;font-size:0.85rem;margin-bottom:1rem\">Comandos prontos baseados nos dados descobertos. Clique para copiar.</p>')
-
-# 1. Nmap deep scan
-cmds = []
-if all_ips:
-    cmds.append(('🔍 Nmap Deep Scan (all IPs)', f'nmap -sV -sC -A -T4 -p- {all_ips} -oN nmap-deep-scan.txt'))
-    cmds.append(('🔍 Nmap Vuln Scripts', f'nmap --script vuln -p- {all_ips} -oN nmap-vuln-scan.txt'))
-if all_active:
-    cmds.append(('🌐 Nuclei Scan (all subs)', f'for sub in {all_active}; do nuclei -u https://\$sub -severity critical,high,medium -o nuclei-\$sub.txt; done'))
-    cmds.append(('🔒 SSL Check (all subs)', f'for sub in {all_active}; do echo \"[*] \$sub\"; echo | openssl s_client -connect \$sub:443 -servername \$sub 2>/dev/null | openssl x509 -noout -dates -subject -issuer; echo; done | tee ssl-check-all.txt'))
-    cmds.append(('📋 HTTP Headers (all subs)', f'for sub in {all_active}; do echo \"=== \$sub ===\"; curl -sI https://\$sub/ -m 10; echo; done | tee http-headers-all.txt'))
-    cmds.append(('🕷 Crawl (all subs)', f'for sub in {all_active}; do echo \"[*] Crawling \$sub\"; katana -u https://\$sub -d 3 -jc -kf all -o crawl-\$sub.txt; done'))
-if has_ftp:
-    ftp_ips = ' '.join([ip for ip, ports in ips_ports.items() if 21 in ports])
-    cmds.append(('📂 FTP Anonymous Check', f'for ip in {ftp_ips}; do echo \"[*] FTP \$ip\"; curl -s ftp://\$ip/ --user anonymous:anonymous -m 10; echo; done | tee ftp-anon-check.txt'))
-if has_ssh:
-    ssh_ips = ' '.join([ip for ip, ports in ips_ports.items() if 22 in ports])
-    cmds.append(('🔐 SSH Banner Grab', f'for ip in {ssh_ips}; do echo \"[*] SSH \$ip\"; timeout 5 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \$ip 2>&1 | head -5; echo; done | tee ssh-banners.txt'))
-if has_db:
-    db_info = []
-    for ip, ports in ips_ports.items():
-        for p in [3306,5432,27017,6379,1433]:
-            if p in ports: db_info.append((ip,p))
-    db_cmds = '; '.join([f'nmap -sV -p {p} --script=\\\"*{\"mysql\" if p==3306 else \"pgsql\" if p==5432 else \"mongodb\" if p==27017 else \"redis\" if p==6379 else \"ms-sql\"}*\\\" {ip}' for ip,p in db_info[:3]])
-    cmds.append(('🗄 DB Service Scan', db_cmds + ' | tee db-service-scan.txt'))
-if has_rdp:
-    rdp_ips = ' '.join([ip for ip, ports in ips_ports.items() if 3389 in ports])
-    cmds.append(('💻 RDP Check', f'nmap -p 3389 --script rdp-ntlm-info,rdp-enum-encryption {rdp_ips} -oN rdp-check.txt'))
-
-# Advanced Techinics (Feature 1)
-cmds.append(('🔥 Nuclei Advanced (Fuzzing)', f'for sub in {all_active}; do nuclei -u https://\$sub -t fuzzing,exposures,cves -severity critical,high -o nuclei-adv-\$sub.txt; done'))
-cmds.append(('🔥 Feroxbuster Recursive', f'for sub in {all_active}; do feroxbuster -u https://\$sub -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt -t 50 -r -o ferox-recursive-\$sub.txt; done'))
-cmds.append(('🔥 Cloud Recon (S3/Azure)', f'python3 -c \"import os; [os.system(\'cloud_enum -d \' + s) for s in \'{all_active}\'.split()]\"'))
-cmds.append(('🔥 MassDNS Brute-force', f'massdns -r /usr/share/massdns/lists/resolvers.txt -t A -o S ${SCOPE_DOMAINS_FILE} -w massdns-results.txt'))
-
-print('<div style=\"display:flex;flex-direction:column;gap:0.4rem\">')
-for label, cmd in cmds:
-    esc = h.escape(cmd, quote=True)
-    print(f'<div class=\"cmd-copy\" style=\"padding:0.5rem 0.8rem;font-size:0.75rem;position:relative\" onclick=\"navigator.clipboard.writeText(this.dataset.cmd);this.classList.add(\\x27copied\\x27);setTimeout(()=>this.classList.remove(\\x27copied\\x27),1500)\" data-cmd=\"{esc}\"><strong>{label}</strong><br><code style=\"color:#94a3b8;font-size:0.7rem\">{h.escape(cmd[:120])}{\"...\" if len(cmd)>120 else \"\"}</code></div>')
-print('</div></div>')
-" 2>/dev/null)
-</div>
+<main class="container">
+    <section class="card hero-card">
+        <span class="eyebrow">superfície autorizada</span>
+        <h2>${PRIMARY_DOMAIN:-ESCOPO}</h2>
+        <p>Relatório técnico consolidado de reconhecimento e análise da superfície web.</p>
+        <div class="scope-meta"><span class="scope-pill">W-BRID</span><span class="scope-pill">gerado $(date '+%Y-%m-%d %H:%M')</span></div>
+    </section>
+    <section class="stats-grid">
+        <a href="subdomains.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon" style="color:#34d399">●</div><div class="stat-number" data-count="$active">$active</div><div class="stat-label">Subdomínios ativos</div></div></a>
+        <a href="subdomains.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon" style="color:#f87171">●</div><div class="stat-number" data-count="$inactive">$inactive</div><div class="stat-label">Subdomínios inativos</div></div></a>
+        <a href="subdomains.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon" style="color:#38bdf8">⌁</div><div class="stat-number" data-count="$unique_ips">$unique_ips</div><div class="stat-label">IPs únicos</div></div></a>
+        <a href="urls.html" class="stat-card-link"><div class="stat-card"><div class="stat-icon" style="color:#f59e0b">↗</div><div class="stat-number" data-count="$total_urls">$total_urls</div><div class="stat-label">URLs coletadas</div></div></a>
+    </section>
+    ${port_chart}
+</main>
 <script src="assets/script.js"></script></body></html>
 EOFHTML
 }
@@ -897,13 +695,13 @@ EOFHTML
 # ============================================
 
 generate_subdomains_page() {
-    local active=$(grep -c '|active|' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null | tr -d '[:space:]' || echo 0)
-    local inactive=$(grep -c '|inactive|' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null | tr -d '[:space:]' || echo 0)
+    local active=$(awk -F'|' '$2=="active"{count++} END{print count+0}' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null)
+    local inactive=$(awk -F'|' '$2=="inactive"{count++} END{print count+0}' "${TEMP_DIR}/validated_subs.txt" 2>/dev/null)
     local total=$(( ${active:-0} + ${inactive:-0} ))
 
     cat > "${DASHBOARD_DIR}/subdomains.html" <<EOFHTML
 <!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Subdomínios - Dashboard</title><link rel="stylesheet" href="assets/style.css"></head><body>
+<title>${REPORT_TITLE}</title><link rel="stylesheet" href="assets/style.css"></head><body>
 $(generate_nav "subdomains")
 <div class="container">
     <div class="card">
@@ -927,6 +725,7 @@ $(generate_nav "subdomains")
                 <th>Status</th>
                 <th>Domínio / Subdomínio</th>
                 <th>IPs Relacionados</th>
+                <th>Infraestrutura IA</th>
                 <th>Portas + Serviços</th>
                 <th>Ações</th>
             </tr></thead>
@@ -1122,7 +921,7 @@ else:
 
         actions+="</div>"
 
-        echo "<tr><td>$idx</td><td>$badge</td><td><a href=\"https://$sub\" target=\"_blank\" style=\"color:#60a5fa\"><code>$sub</code></a></td><td class=\"ip-cell\">$ip_html</td><td>$ports_html</td><td class=\"actions-cell\">$actions</td></tr>" >> "${DASHBOARD_DIR}/subdomains.html"
+        echo "<tr><td>$idx</td><td>$badge</td><td><a href=\"https://$sub\" target=\"_blank\" style=\"color:#60a5fa\"><code>$sub</code></a></td><td class=\"ip-cell\">$ip_html</td><td class=\"ai-infra-cell\" data-host=\"$sub\"><span style=\"color:#64748b\">aguardando IA</span></td><td>$ports_html</td><td class=\"actions-cell\">$actions</td></tr>" >> "${DASHBOARD_DIR}/subdomains.html"
         idx=$((idx + 1))
     done
 
@@ -1152,11 +951,15 @@ for name, tool_cmd in tools:
 print('</div></div>')
 " >> "${DASHBOARD_DIR}/subdomains.html"
 
-    echo "</div><script src=\"assets/script.js\"></script></body></html>" >> "${DASHBOARD_DIR}/subdomains.html"
+    cat >> "${DASHBOARD_DIR}/subdomains.html" <<'EOFHTML'
+</div><script src="assets/ai-data.js"></script><script src="assets/script.js"></script><script>
+document.addEventListener('DOMContentLoaded',()=>{const data=window.WBRID_AI_DATA||{},rows=Array.isArray(data.infrastructure)?data.infrastructure:[],byHost={};rows.forEach(item=>{const host=String(item.host||'').toLowerCase();if(host)(byHost[host]||(byHost[host]=[])).push(item)});document.querySelectorAll('.ai-infra-cell').forEach(cell=>{const items=byHost[String(cell.dataset.host||'').toLowerCase()]||[];cell.textContent='';if(!items.length){cell.textContent=data.status==='ready'?'—':'aguardando IA';return}items.slice(0,4).forEach(item=>{const line=document.createElement('div'),provider=document.createElement('strong'),detail=document.createElement('small');provider.textContent=item.provider||'Provedor detectado';detail.textContent=`${item.type||''}${item.ip?' · '+item.ip:''}`;detail.style.display='block';detail.style.color='#64748b';line.append(provider,detail);line.title=item.evidence||'';line.style.marginBottom='.35rem';cell.appendChild(line)})})});
+</script></body></html>
+EOFHTML
 }
 
 # ============================================
-# PAGE: BRID-CRAFTJS
+# PAGE: BIRD-CRAFTJS
 # ============================================
 
 generate_brid_page() {
@@ -1195,7 +998,7 @@ sorted_groups = sorted(groups.items(), key=lambda x: (x[0][0].lower(), x[0][1].l
 
 # Write HTML
 print('<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">')
-print('<title>BRID-CRAFTJS - Dashboard</title><link rel=\"stylesheet\" href=\"assets/style.css\">')
+print('<title>${REPORT_TITLE}</title><link rel=\"stylesheet\" href=\"assets/style.css\">')
 print('<style>')
 print('.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;justify-content:center;align-items:center}')
 print('.modal-overlay.active{display:flex}')
@@ -1210,6 +1013,11 @@ print('.count-1{background:rgba(99,102,241,0.15);color:#a5b4fc}')
 print('.count-multi{background:rgba(251,146,60,0.2);color:#fdba74}')
 print('.src-btn{padding:0.2rem 0.6rem;border-radius:0.3rem;border:1px solid rgba(96,165,250,0.3);background:rgba(96,165,250,0.08);color:#60a5fa;font-size:0.72rem;cursor:pointer}')
 print('.src-btn:hover{background:rgba(96,165,250,0.2)}')
+print('.craft-wrap{overflow-x:hidden}')
+print('.craft-table{width:100%;table-layout:fixed}')
+print('.craft-table th:nth-child(1){width:58px}.craft-table th:nth-child(2){width:18%}.craft-table th:nth-child(4){width:76px}.craft-table th:nth-child(5){width:120px}')
+print('.craft-data,.craft-data code,.modal-data{display:block;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}')
+print('.craft-table td{vertical-align:top}')
 print('</style>')
 print('</head><body>')
 " > "${DASHBOARD_DIR}/brid-craftjs.html"
@@ -1242,10 +1050,10 @@ unique_count = len(sorted_groups)
 total_count = sum(v['count'] for v in groups.values())
 
 print(f'<div class=\"container\">')
-print(f'<div class=\"card\"><h2>🔑 BRID-CRAFTJS <span class=\"llm-badge\">📊 Auto</span></h2>')
+print(f'<div class=\"card\"><h2>Bird-CraftJS</h2>')
 print(f'<p>Total: <strong>{total_count}</strong> achados • <strong>{unique_count}</strong> únicos (agrupados por conteúdo)</p></div>')
 print('<div class=\"filter-bar\"><input type=\"text\" id=\"searchInput\" placeholder=\"🔍 Buscar...\"><button class=\"export-btn\" onclick=\"exportCSV()\">📄 CSV</button><button class=\"export-btn\" onclick=\"exportJSON()\">📋 JSON</button></div>')
-print('<div class=\"table-container\"><table><thead><tr><th>#</th><th>Título</th><th>Dado</th><th>Qtd</th><th>Fontes</th></tr></thead><tbody>')
+print('<div class=\"table-container craft-wrap\"><table class=\"craft-table\"><thead><tr><th>#</th><th>Título</th><th>Dado</th><th>Qtd</th><th>Fontes</th></tr></thead><tbody>')
 
 modals = []
 for idx, ((titulo, dado), info) in enumerate(sorted_groups, 1):
@@ -1256,7 +1064,7 @@ for idx, ((titulo, dado), info) in enumerate(sorted_groups, 1):
     cnt_class = 'count-1' if cnt == 1 else 'count-multi'
     modal_id = f'modal-{idx}'
 
-    print(f'<tr><td>{idx}</td><td><strong>{t_esc}</strong></td><td><code style=\"color:#fca5a5\">{d_esc}</code></td>')
+    print(f'<tr><td>{idx}</td><td><strong>{t_esc}</strong></td><td class=\"craft-data\"><code style=\"color:#fca5a5\">{d_esc}</code></td>')
     print(f'<td><span class=\"count-badge {cnt_class}\">{cnt}×</span></td>')
     print(f'<td><button class=\"src-btn\" onclick=\"document.getElementById(\\'{modal_id}\\').classList.add(\\'active\\')\">')
     print(f'🔗 {len(urls)} fonte{\"s\" if len(urls)!=1 else \"\"}</button></td></tr>')
@@ -1267,7 +1075,7 @@ for idx, ((titulo, dado), info) in enumerate(sorted_groups, 1):
         f'<div class=\"modal-box\">'
         f'<button class=\"modal-close\" onclick=\"this.closest(\\'.modal-overlay\\').classList.remove(\\'active\\')\">&times;</button>'
         f'<h3>🔗 Fontes: {t_esc}</h3>'
-        f'<code style=\"color:#fca5a5;font-size:0.85rem\">{d_esc}</code><hr style=\"border-color:#334155;margin:0.8rem 0\">'
+        f'<code class=\"modal-data\" style=\"color:#fca5a5;font-size:0.85rem\">{d_esc}</code><hr style=\"border-color:#334155;margin:0.8rem 0\">'
         f'{urls_html}'
         f'</div></div>')
 
@@ -1295,7 +1103,7 @@ generate_urls_page() {
     local count=$(wc -l < "$sorted_urls" | tr -d ' ')
     cat > "${DASHBOARD_DIR}/urls.html" <<EOFHTML
 <!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>URLs - Dashboard</title><link rel="stylesheet" href="assets/style.css"></head><body>
+<title>${REPORT_TITLE}</title><link rel="stylesheet" href="assets/style.css"></head><body>
 $(generate_nav "urls")
 <div class="container">
     <div class="card"><h2>🔗 URLs Coletadas <span class="llm-badge">📊 Auto</span></h2><p>Total: <strong id="visibleCount">$count</strong> URLs únicas em escopo</p></div>
@@ -1357,7 +1165,7 @@ print(json.dumps(sort_tree(tree)))
 
     cat > "${DASHBOARD_DIR}/tree.html" <<EOFHTML
 <!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Tree - Dashboard</title><link rel="stylesheet" href="assets/style.css">
+<title>${REPORT_TITLE}</title><link rel="stylesheet" href="assets/style.css">
 <style>
 .tree-container{font-family:'JetBrains Mono',monospace;font-size:0.82rem;line-height:1.8}
 .tree-node{padding-left:1.2rem;border-left:1px solid rgba(99,102,241,0.15)}
@@ -1505,6 +1313,126 @@ EOFHTML
 }
 
 # ============================================
+# PAGE: FINAL FINDINGS
+# ============================================
+
+generate_final_findings_page() {
+    cat > "${DASHBOARD_DIR}/final-findings.html" <<EOFHTML
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${REPORT_TITLE}</title><link rel="stylesheet" href="assets/style.css"></head><body>
+$(generate_nav "final")
+<main class="container"><section class="card hero-card"><span class="eyebrow">correlação dinâmica</span><h2>Final Findings</h2><p>Achados consolidados por causa raiz; URLs repetidas aparecem somente como ocorrências.</p></section>
+<div class="filter-bar"><input id="findingSearch" type="search" placeholder="Buscar achado, categoria ou alvo..."><select id="findingSeverity"><option value="">Todas as severidades</option><option value="critical">Crítico</option><option value="high">Alto</option><option value="medium">Médio</option><option value="low">Baixo</option></select></div>
+<section id="finalFindingList">
+EOFHTML
+    FINAL_FINDINGS_FILE="$FINAL_FINDINGS_FILE" python3 <<'PYEOF' >> "${DASHBOARD_DIR}/final-findings.html"
+import html, json, os
+
+groups = {}
+path = os.environ["FINAL_FINDINGS_FILE"]
+try:
+    lines = open(path, encoding="utf-8", errors="replace")
+except OSError:
+    lines = []
+for raw in lines:
+    try:
+        item = json.loads(raw)
+    except ValueError:
+        continue
+    key = item.get("merge_key") or "|".join(str(item.get(name, "")) for name in ("id", "target", "title"))
+    current = groups.setdefault(key, dict(item, urls=[], source_files=[], occurrences=0))
+    current["occurrences"] += int(item.get("occurrences") or 1)
+    for url in item.get("urls") or []:
+        if url not in current["urls"]:
+            current["urls"].append(url)
+    source = item.get("_source_file")
+    if source and source not in current["source_files"]:
+        current["source_files"].append(source)
+
+rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+items = sorted(groups.values(), key=lambda row: (rank.get(row.get("severity"), 9), row.get("category", ""), row.get("title", "")))
+if not items:
+    print('<div class="empty-state">Nenhum achado consolidado disponível para o escopo atual.</div>')
+for index, item in enumerate(items, 1):
+    severity = item.get("severity", "info")
+    title = html.escape(str(item.get("title", "Achado")))
+    category = html.escape(str(item.get("category", "Outro")))
+    target = html.escape(str(item.get("target", "")))
+    confidence = html.escape(str(item.get("confidence", "")))
+    description = html.escape(str(item.get("description", "")))
+    impact = html.escape(str(item.get("impact", "")))
+    recommendation = html.escape(str(item.get("recommendation", "")))
+    evidence = html.escape(str(item.get("evidence", "")))
+    urls = item.get("urls", [])
+    occurrences = max(item.get("occurrences", 0), len(urls), 1)
+    search = html.escape(f"{title} {category} {target}".lower(), quote=True)
+    print(f'<article class="card finding-card severity-{severity}" data-severity="{severity}" data-search="{search}">')
+    print(f'<span class="section-number">#{index:03d} · {html.escape(str(item.get("id", "FINDING")))}</span><h3>{title}</h3>')
+    print(f'<div class="finding-meta"><span>{category}</span><span>{severity.upper()}</span><span>confiança {confidence}</span><span>{occurrences} ocorrência(s)</span><span>{target}</span></div>')
+    if description: print(f'<p>{description}</p>')
+    if impact: print(f'<details><summary>Impacto</summary><p>{impact}</p></details>')
+    if recommendation: print(f'<details><summary>Recomendação</summary><p>{recommendation}</p></details>')
+    if evidence: print(f'<details><summary>Evidência representativa</summary><pre class="evidence-block">{evidence}</pre></details>')
+    if urls:
+        print(f'<details><summary>URLs afetadas — exibindo {min(5, len(urls))} de {len(urls)}</summary><div class="evidence-block">')
+        for url in urls[:5]:
+            safe = html.escape(str(url))
+            print(f'<a href="{safe}" target="_blank" rel="noreferrer">{safe}</a><br>')
+        print('</div></details>')
+    print('</article>')
+PYEOF
+    cat >> "${DASHBOARD_DIR}/final-findings.html" <<'EOFHTML'
+</section></main><script src="assets/script.js"></script><script>
+const fs=document.getElementById('findingSearch'),fv=document.getElementById('findingSeverity'),cards=[...document.querySelectorAll('.finding-card')];
+function filterFindings(){const q=(fs.value||'').toLowerCase(),s=fv.value;cards.forEach(c=>c.hidden=!(c.dataset.search.includes(q)&&(!s||c.dataset.severity===s)))}
+fs.addEventListener('input',filterFindings);fv.addEventListener('change',filterFindings);
+</script></body></html>
+EOFHTML
+}
+
+# ============================================
+# PAGE: AI FINDINGS
+# ============================================
+
+generate_ai_assets() {
+    if [[ "$AI_ENABLED" =~ ^(1|s|S|y|Y)$ ]]; then
+        echo 'window.WBRID_AI_STATUS={status:"pending"};' > "${ASSETS_DIR}/ai-status.js"
+        echo 'window.WBRID_AI_DATA={status:"pending",findings:[],api_endpoints:[],infrastructure:[],technologies:[],coverage:{}};' > "${ASSETS_DIR}/ai-data.js"
+    else
+        echo 'window.WBRID_AI_STATUS={status:"disabled"};' > "${ASSETS_DIR}/ai-status.js"
+        echo 'window.WBRID_AI_DATA={status:"disabled",findings:[],api_endpoints:[],infrastructure:[],technologies:[],coverage:{}};' > "${ASSETS_DIR}/ai-data.js"
+    fi
+    cat > "${DASHBOARD_DIR}/ai-findings.html" <<EOFHTML
+<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${REPORT_TITLE}</title><link rel="stylesheet" href="assets/style.css"></head><body>
+$(generate_nav "ai")
+<main class="container"><section class="card hero-card"><span class="eyebrow">análise complementar</span><h2>IA Findings</h2><p>Correlação dos outputs, JavaScript em escopo e validações de conteúdo.</p><div id="aiCoverage" class="scope-meta"></div></section><section id="aiInfraSection" class="card" hidden><span class="eyebrow">infraestrutura detectada</span><h3>WAF, CDN e Cloud</h3><div class="filter-bar"><input id="aiInfraSearch" type="search" placeholder="Buscar host, provedor ou tipo..."><span id="aiInfraCount" class="scope-pill"></span></div><div class="table-container"><table><thead><tr><th>Host</th><th>Provedor</th><th>Tipo</th><th>Evidência</th></tr></thead><tbody id="aiInfraBody"></tbody></table></div><div class="filter-bar"><button id="aiInfraPrev" class="export-btn" type="button">Anterior</button><span id="aiInfraPage" class="scope-pill"></span><button id="aiInfraNext" class="export-btn" type="button">Próxima</button></div></section><section id="aiTechSection" class="card" hidden><span class="eyebrow">fingerprint validado</span><h3>Tecnologias e versões</h3><div class="filter-bar"><input id="aiTechSearch" type="search" placeholder="Buscar host, tecnologia ou versão..."><span id="aiTechCount" class="scope-pill"></span></div><div class="table-container"><table><thead><tr><th>Host</th><th>Tecnologia</th><th>Versão</th><th>Encontrado em</th></tr></thead><tbody id="aiTechBody"></tbody></table></div></section><section id="aiApiSection" class="card" hidden><span class="eyebrow">inventário correlacionado</span><h3>Endpoints de API</h3><div class="filter-bar"><input id="aiApiSearch" type="search" placeholder="Buscar método, endpoint ou fonte..."><span id="aiApiCount" class="scope-pill"></span></div><div class="table-container"><table><thead><tr><th>Método</th><th>Endpoint completo</th><th>Encontrado em</th></tr></thead><tbody id="aiApiBody"></tbody></table></div><div class="filter-bar"><button id="aiApiPrev" class="export-btn" type="button">Anterior</button><span id="aiApiPage" class="scope-pill"></span><button id="aiApiNext" class="export-btn" type="button">Próxima</button></div></section><div class="filter-bar"><input id="aiSearch" type="search" placeholder="Buscar achados da IA..."><select id="aiSeverity"><option value="">Todas as severidades</option><option value="critical">Crítico</option><option value="high">Alto</option><option value="medium">Médio</option><option value="low">Baixo</option><option value="info">Informativo</option></select></div><section id="aiFindingList"><div class="empty-state">A análise ainda está em processamento. Atualize a página em alguns instantes.</div></section></main>
+EOFHTML
+    cat >> "${DASHBOARD_DIR}/ai-findings.html" <<'EOFHTML'
+<script src="assets/ai-data.js"></script><script src="assets/script.js"></script><script>
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sourceDetails=values=>{const sources=[...new Set(Array.isArray(values)?values:[])];if(!sources.length)return '<span style="color:#64748b">—</span>';return `<details><summary>${sources.length} fonte${sources.length===1?'':'s'}</summary><div class="evidence-block">${sources.map(source=>{const safe=esc(source);return /^https?:\/\//i.test(source)?`<a href="${safe}" target="_blank" rel="noreferrer">${safe}</a>`:`<code>${safe}</code>`}).join('<br>')}</div></details>`};
+const data=window.WBRID_AI_DATA||{},list=document.getElementById('aiFindingList'),coverage=document.getElementById('aiCoverage');
+if(data.status==='ready'){
+  const c=data.coverage||{};coverage.innerHTML=`<span class="scope-pill">${Number(c.files_processed||0)} arquivos</span><span class="scope-pill">${Number(c.bytes_processed||0).toLocaleString()} bytes</span><span class="scope-pill">${Number(c.js_analyzed||0)} JS em escopo</span><span class="scope-pill">${Number(c.api_endpoints_discovered||0).toLocaleString()} endpoints de API</span><span class="scope-pill">${Number(c.llm_calls_completed||0)}/${Number(c.llm_calls_planned||0)} lotes IA</span><span class="scope-pill">${Number(c.sitemaps_processed||0)} sitemaps</span>${c.analysis_complete===false?'<span class="scope-pill">cobertura parcial</span>':''}`;
+  const infra=Array.isArray(data.infrastructure)?data.infrastructure:[],infraSection=document.getElementById('aiInfraSection'),infraBody=document.getElementById('aiInfraBody'),infraSearch=document.getElementById('aiInfraSearch'),infraCount=document.getElementById('aiInfraCount'),infraPage=document.getElementById('aiInfraPage');let infraCurrent=1;const infraPageSize=50;
+  function renderInfra(){const q=(infraSearch.value||'').toLowerCase(),filtered=infra.filter(item=>`${item.host||''} ${item.ip||''} ${item.provider||''} ${item.type||''} ${item.evidence||''}`.toLowerCase().includes(q)),pages=Math.max(1,Math.ceil(filtered.length/infraPageSize));infraCurrent=Math.min(infraCurrent,pages);const start=(infraCurrent-1)*infraPageSize;infraBody.innerHTML=filtered.slice(start,start+infraPageSize).map(item=>`<tr><td><code>${esc(item.host)}</code>${item.ip?`<br><small>${esc(item.ip)}</small>`:''}</td><td>${esc(item.provider)}</td><td>${esc(item.type)}</td><td>${esc(item.evidence)}</td></tr>`).join('')||'<tr><td colspan="4">Nenhuma infraestrutura corresponde ao filtro.</td></tr>';infraCount.textContent=`${filtered.length.toLocaleString()} sinal(is)`;infraPage.textContent=`Página ${infraCurrent} de ${pages}`;document.getElementById('aiInfraPrev').disabled=infraCurrent<=1;document.getElementById('aiInfraNext').disabled=infraCurrent>=pages}
+  if(infra.length){infraSection.hidden=false;renderInfra();infraSearch.addEventListener('input',()=>{infraCurrent=1;renderInfra()});document.getElementById('aiInfraPrev').addEventListener('click',()=>{infraCurrent--;renderInfra()});document.getElementById('aiInfraNext').addEventListener('click',()=>{infraCurrent++;renderInfra()})}
+  const tech=Array.isArray(data.technologies)?data.technologies:[],techSection=document.getElementById('aiTechSection'),techBody=document.getElementById('aiTechBody'),techSearch=document.getElementById('aiTechSearch'),techCount=document.getElementById('aiTechCount');
+  function renderTech(){const q=(techSearch.value||'').toLowerCase(),filtered=tech.filter(item=>`${item.host||''} ${item.name||''} ${item.version||''} ${(item.sources||[]).join(' ')}`.toLowerCase().includes(q));techBody.innerHTML=filtered.slice(0,200).map(item=>`<tr><td><code>${esc(item.host)}</code></td><td>${esc(item.name)}</td><td>${esc(item.version||'não exposta')}</td><td>${sourceDetails(item.sources)}</td></tr>`).join('')||'<tr><td colspan="4">Nenhuma tecnologia corresponde ao filtro.</td></tr>';techCount.textContent=`${filtered.length.toLocaleString()} tecnologia(s)${filtered.length>200?' · primeiras 200 exibidas':''}`}
+  if(tech.length){techSection.hidden=false;renderTech();techSearch.addEventListener('input',renderTech)}
+  const endpoints=Array.isArray(data.api_endpoints)?data.api_endpoints:[],apiSection=document.getElementById('aiApiSection'),apiBody=document.getElementById('aiApiBody'),apiSearch=document.getElementById('aiApiSearch'),apiCount=document.getElementById('aiApiCount'),apiPage=document.getElementById('aiApiPage');let apiCurrent=1;const apiPageSize=50;
+  function renderAPI(){const q=(apiSearch.value||'').toLowerCase(),filtered=endpoints.filter(item=>`${item.method||''} ${item.url||''} ${(item.sources||[]).join(' ')}`.toLowerCase().includes(q)),pages=Math.max(1,Math.ceil(filtered.length/apiPageSize));apiCurrent=Math.min(apiCurrent,pages);const start=(apiCurrent-1)*apiPageSize;apiBody.innerHTML=filtered.slice(start,start+apiPageSize).map(item=>`<tr><td><code>${esc(item.method||'UNKNOWN')}</code></td><td style="overflow-wrap:anywhere"><a class="api-endpoint-link" href="${esc(item.url)}" target="_blank" rel="noreferrer">${esc(item.url)}</a></td><td>${sourceDetails(item.sources)}</td></tr>`).join('')||'<tr><td colspan="3">Nenhum endpoint corresponde ao filtro.</td></tr>';apiCount.textContent=`${filtered.length.toLocaleString()} endpoint(s)`;apiPage.textContent=`Página ${apiCurrent} de ${pages}`;document.getElementById('aiApiPrev').disabled=apiCurrent<=1;document.getElementById('aiApiNext').disabled=apiCurrent>=pages}
+  if(endpoints.length){apiSection.hidden=false;renderAPI();apiSearch.addEventListener('input',()=>{apiCurrent=1;renderAPI()});document.getElementById('aiApiPrev').addEventListener('click',()=>{apiCurrent--;renderAPI()});document.getElementById('aiApiNext').addEventListener('click',()=>{apiCurrent++;renderAPI()})}
+  const findings=Array.isArray(data.findings)?data.findings:[];
+  list.innerHTML=findings.length?'':'<div class="empty-state">A IA não produziu achados adicionais confirmáveis.</div>';
+  findings.forEach((f,i)=>{const urls=(f.urls||[]).slice(0,5),sources=f.sources||[],article=document.createElement('article');article.className=`card finding-card severity-${esc(f.severity||'info')}`;article.dataset.severity=f.severity||'info';article.dataset.search=`${f.title||''} ${f.category||''} ${f.target||''}`.toLowerCase();article.innerHTML=`<span class="section-number">#${String(i+1).padStart(3,'0')} · IA</span><h3>${esc(f.title||'Achado complementar')}</h3><div class="finding-meta"><span>${esc(f.category||'Correlação')}</span><span>${esc((f.severity||'info').toUpperCase())}</span><span>confiança ${esc(f.confidence||'média')}</span><span>${esc(f.target||'')}</span></div><p>${esc(f.description||'')}</p>${f.evidence?`<details><summary>Evidência</summary><pre class="evidence-block">${esc(f.evidence)}</pre></details>`:''}${f.recommendation?`<details><summary>Recomendação</summary><p>${esc(f.recommendation)}</p></details>`:''}${sources.length?sourceDetails(sources):''}${urls.length?`<details><summary>URLs representativas</summary><div class="evidence-block">${urls.map(u=>`<a href="${esc(u)}" target="_blank" rel="noreferrer">${esc(u)}</a>`).join('<br>')}</div></details>`:''}`;list.appendChild(article)});
+} else if(data.status==='error'){list.innerHTML=`<div class="empty-state">A análise falhou: ${esc(data.error||'erro não informado')}</div>`}
+const s=document.getElementById('aiSearch'),v=document.getElementById('aiSeverity');function filterAI(){const q=(s.value||'').toLowerCase();document.querySelectorAll('#aiFindingList .finding-card').forEach(c=>c.hidden=!(c.dataset.search.includes(q)&&(!v.value||c.dataset.severity===v.value)))}s.addEventListener('input',filterAI);v.addEventListener('change',filterAI);
+</script></body></html>
+EOFHTML
+}
+
+# ============================================
 # MAIN
 # ============================================
 
@@ -1535,22 +1463,19 @@ main() {
     # 4. Shodan enrichment
     enrich_with_shodan
 
-    # 5. Rule-based analysis
-    log_info "Gerando análise baseada em regras..."
-    local analysis
-    analysis=$(generate_analysis)
-    log_success "Análise concluída"
-
-    # 6. Generate pages
+    # 5. Generate pages
     log_info "Gerando páginas HTML..."
     generate_css
     generate_js
-    generate_index "$analysis"
+    generate_ai_assets
+    generate_index
     generate_subdomains_page
     generate_brid_page
     generate_urls_page
     generate_tree_page
     generate_dns_page
+    generate_final_findings_page
+    cp "${DASHBOARD_DIR}/index.html" "${DASHBOARD_DIR}/relatorio.html"
 
     # Clean up removed pages
     rm -f "${DASHBOARD_DIR}/all-subdomains.html"
@@ -1559,7 +1484,7 @@ main() {
     rm -f "${DASHBOARD_DIR}/repos.html"
 
     log_success "Dashboard gerado em: ${DASHBOARD_DIR}/"
-    log_info "Páginas: index.html, subdomains.html, brid-craftjs.html, urls.html, tree.html, dns.html"
+    log_info "Páginas: index.html, relatorio.html, subdomains.html, brid-craftjs.html, final-findings.html, ai-findings.html, urls.html, tree.html, dns.html"
 }
 
 # ============================================
@@ -1575,6 +1500,7 @@ from io import StringIO
 
 OUT_DIR = os.environ.get("OUT_DIR", "OUT-WEB-BIRD")
 DASHBOARD_DIR = os.environ.get("DASHBOARD_DIR", "dashboard")
+PRIMARY_DOMAIN = os.environ.get("PRIMARY_DOMAIN", "ESCOPO")
 
 # --- Parse dnsrecon CSV ---
 dns_records = []  # list of dicts {domain, type, name, address, target, port, string}
@@ -1672,7 +1598,7 @@ for r in dns_records:
 # --- Generate HTML ---
 out = open(os.path.join(DASHBOARD_DIR, "dns.html"), "w")
 out.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">\n')
-out.write('<title>DNS Analysis - Dashboard</title><link rel="stylesheet" href="assets/style.css">\n')
+out.write(f'<title>W-BRID - {h.escape(PRIMARY_DOMAIN)}</title><link rel="stylesheet" href="assets/style.css">\n')
 out.write('<style>\n')
 out.write('.dns-tree{margin:0.5rem 0}\n')
 out.write('.dns-type-header{display:flex;align-items:center;gap:0.5rem;padding:0.6rem 1rem;cursor:pointer;border-radius:0.5rem;background:rgba(99,102,241,0.06);margin:0.3rem 0;transition:background 0.2s}\n')
@@ -1706,10 +1632,13 @@ nav_html = subprocess.run(['bash', '-c', 'source ' + os.path.join(os.path.dirnam
 out = open(os.path.join(DASHBOARD_DIR, "dns.html"), "a")
 
 # Write nav manually since we can't source bash function from Python
-out.write('<nav><div class="container"><h1>🦅 Bird Tool Web Analyzer <span class="llm-badge">📊 Auto</span></h1><div class="nav-links">')
+out.write('<script src="assets/ai-status.js"></script>')
+out.write(f'<nav><div class="container"><h1>W-BRID <span>— {h.escape(PRIMARY_DOMAIN)}</span></h1><div class="nav-links">')
 out.write('<a href="index.html">Dashboard</a>')
-out.write('<a href="subdomains.html">Subdominios</a>')
-out.write('<a href="brid-craftjs.html">BRID-CRAFTJS</a>')
+out.write('<a href="subdomains.html">Subdomínios</a>')
+out.write('<a href="brid-craftjs.html">Bird-Craft</a>')
+out.write('<a data-ai-link class="ai-nav is-disabled">IA Findings</a>')
+out.write('<a href="final-findings.html">Final Findings</a>')
 out.write('<a href="urls.html">URLs</a>')
 out.write('<a href="tree.html">Tree</a>')
 out.write('<a href="dns.html" class="active">DNS</a>')
