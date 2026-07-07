@@ -22,9 +22,8 @@ echo "│  • sublist3r   • urlfinder   • katana              │"
 echo "│  • dnsenum    • subfinder    • waybackurls         │"
 echo "│  • dnsrecon   • fierce      • bird-craftjs         │"
 echo "├────────────────────────────────────────────────────┤"
-echo "│  Dashboards:                                        │"
-echo "│  • 📊 Dashboard (análise baseada em regras)         │"
-echo "│  • 🤖 Dashboard LLM (análise com IA/Ollama)         │"
+echo "│  Relatório:                                         │"
+echo "│  • 📊 W-BRID + análise IA opcional em segundo plano │"
 echo "└────────────────────────────────────────────────────┘"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -53,18 +52,30 @@ fi
 echo ""
 
 # ============================================
-# DASHBOARD — escolha interativa
+# ESCOPO ATUAL
+# ============================================
+BIRD_SCOPE_DOMAIN=$(head -n 1 target.txt | sed -E 's#^https?://##;s#/.*$##;s/:.*$//' | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+if [[ -z "$BIRD_SCOPE_DOMAIN" ]]; then
+    echo "❌ Nenhum domínio válido foi informado em target.txt"
+    exit 1
+fi
+export BIRD_SCOPE_DOMAIN
+mkdir -p "OUT-WEB-BIRD/$BIRD_SCOPE_DOMAIN"
+echo "$BIRD_SCOPE_DOMAIN" > OUT-WEB-BIRD/.current-scope
+
+# ============================================
+# IA — escolha interativa
 # ============================================
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📊 ESCOLHA O DASHBOARD"
+echo "🤖 ANÁLISE IA OPCIONAL"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "  1) 📊 Dashboard (sem LLM — análise por regras)"
-echo "  2) 🤖 Dashboard LLM (requer Ollama rodando)"
-echo "  3) 📊 + 🤖 Ambos"
-echo ""
-read -p "Escolha [1/2/3] (padrão: 1): " dashboard_choice
-dashboard_choice=${dashboard_choice:-1}
+read -p "Ativar análise IA em segundo plano após o relatório? [s/N]: " enable_ai
+if [[ "$enable_ai" =~ ^[sS]$ ]]; then
+    export BIRD_AI_ENABLED=1
+else
+    export BIRD_AI_ENABLED=0
+fi
 echo ""
 
 # ============================================
@@ -157,6 +168,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 ./tool-bird-craftjs.sh
 
+echo " "
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔎 CONSOLIDANDO ACHADOS HTTP, TLS, HEADERS E MÉTODOS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+./tool-bird-final-findings.sh
+
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ FERRAMENTAS FINALIZADAS"
@@ -164,28 +182,14 @@ echo "📊 GERANDO DASHBOARD HTML"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Gerar dashboard(s) conforme escolha
-case "$dashboard_choice" in
-    1)
-        echo "📊 Gerando Dashboard (sem LLM)..."
-        ./tool-web-dashboard.sh
-        ;;
-    2)
-        echo "🤖 Gerando Dashboard LLM..."
-        ./tool-web-dashboard-llm.sh
-        ;;
-    3)
-        echo "📊 Gerando Dashboard (sem LLM)..."
-        ./tool-web-dashboard.sh
-        echo ""
-        echo "🤖 Gerando Dashboard LLM..."
-        ./tool-web-dashboard-llm.sh
-        ;;
-    *)
-        echo "📊 Gerando Dashboard (sem LLM)..."
-        ./tool-web-dashboard.sh
-        ;;
-esac
+echo "📊 Gerando relatório W-BRID..."
+./tool-web-dashboard.sh
+
+if [[ "$BIRD_AI_ENABLED" == "1" ]]; then
+    echo "🤖 Iniciando análise IA em segundo plano..."
+    nohup ./tool-web-ai-analysis.sh > "OUT-WEB-BIRD/$BIRD_SCOPE_DOMAIN/$BIRD_SCOPE_DOMAIN-bird-ai.log" 2>&1 &
+    echo "🤖 PID da análise IA: $!"
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -194,18 +198,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "📅 Data/Hora: $(date '+%d/%m/%Y %H:%M:%S')"
 echo "📁 Resultados salvos em: OUT-WEB-BIRD/"
-case "$dashboard_choice" in
-    1) echo "📁 Dashboard salvo em: dashboard/" ;;
-    2) echo "📁 Dashboard LLM salvo em: dashboard-llm/" ;;
-    3) echo "📁 Dashboard salvo em: dashboard/ + dashboard-llm/" ;;
-esac
+echo "📁 Relatório salvo em: dashboard/"
+[[ "$BIRD_AI_ENABLED" == "1" ]] && echo "🤖 A análise IA continuará em segundo plano; atualize a página para liberar o menu quando concluir."
 
 echo ""
 echo "🌐 Abrindo dashboard no navegador..."
-case "$dashboard_choice" in
-    1) xdg-open "dashboard/index.html" 2>/dev/null & ;;
-    2) xdg-open "dashboard-llm/index.html" 2>/dev/null & ;;
-    3) xdg-open "dashboard/index.html" 2>/dev/null &
-       xdg-open "dashboard-llm/index.html" 2>/dev/null & ;;
-    *) xdg-open "dashboard/index.html" 2>/dev/null & ;;
-esac
+xdg-open "dashboard/index.html" 2>/dev/null &
